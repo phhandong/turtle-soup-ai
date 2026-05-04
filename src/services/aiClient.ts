@@ -1,5 +1,6 @@
 import type { AiRequest, AiResponse } from "../types/story";
 
+const defaultApiUrl = "https://turtle-soup-ai-proxy.ai-turtle-soup.workers.dev";
 const validAnswers = new Set(["是", "不是", "是也不是", "无关"]);
 const labelByAnswer = {
   是: "yes",
@@ -9,11 +10,9 @@ const labelByAnswer = {
 } as const;
 
 export async function askAi(request: AiRequest): Promise<AiResponse> {
-  const apiUrl = import.meta.env.VITE_AI_API_URL as string | undefined;
-
-  if (!apiUrl || apiUrl.includes("your-api.example.com")) {
-    return mockAiResponse(request);
-  }
+  const configuredApiUrl = import.meta.env.VITE_AI_API_URL as string | undefined;
+  const apiUrl =
+    configuredApiUrl && !configuredApiUrl.includes("your-api.example.com") ? configuredApiUrl : defaultApiUrl;
 
   const response = await fetch(apiUrl, {
     method: "POST",
@@ -43,19 +42,4 @@ function normalizeAiResponse(data: Partial<AiResponse>, hintEnabled: boolean): A
   }
 
   return normalized;
-}
-
-function mockAiResponse(request: AiRequest): Promise<AiResponse> {
-  const result: AiResponse = {
-    answer: "无关",
-    label: labelByAnswer["无关"],
-  };
-
-  if (request.hintEnabled) {
-    result.hint = "试着换个角度，把问题问得更具体一些。";
-  }
-
-  return new Promise<AiResponse>((resolve) => {
-    window.setTimeout(() => resolve(result), 450);
-  });
 }
