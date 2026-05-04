@@ -34,6 +34,11 @@ export default {
       return withCors({ error: validationError }, 400);
     }
 
+    const factAnswer = answerKnownFact(payload);
+    if (factAnswer) {
+      return withCors(factAnswer, 200);
+    }
+
     const prompt = buildPrompt(payload);
     const upstream = await fetch(`${MIMO_BASE_URL}/chat/completions`, {
       method: "POST",
@@ -79,18 +84,47 @@ function validatePayload(payload) {
   return "";
 }
 
+function answerKnownFact(payload) {
+  const answer = answerDeathQuestion(payload.question, payload.truth);
+  return answer
+    ? {
+        answer,
+        label: answerMap[answer],
+      }
+    : null;
+}
+
+function answerDeathQuestion(question, truth) {
+  if (!asksAboutDeath(question)) return "";
+  return mentionsDeathFact(truth) ? "是" : "不是";
+}
+
+function asksAboutDeath(question) {
+  return /死|死亡|自杀|被杀|遇害|丧命|去世|死者/.test(question);
+}
+
+function mentionsDeathFact(truth) {
+  return /死|死亡|自杀|被杀|遇害|丧命|去世|死者/.test(truth);
+}
+
 function buildPrompt(payload) {
   const system = [
     "你是一个海龟汤游戏主持人。",
-    "你知道当前题目的汤面和汤底。",
-    "你只能根据当前汤面、汤底和用户本次问题回答。",
+    "你只处理当前这一题，不能使用其他题目或常见海龟汤套路来回答。",
+    "你必须仅依据输入中的“汤面”和“汤底”作答，不得使用外部常识补全剧情。",
     "你不能参考任何历史对话。",
+    "如果问题无法从当前汤底直接判断，必须回答“无关”。",
     "默认只允许回答“是”、“不是”、“是也不是”、“无关”四种之一。",
     "不要主动泄露汤底。",
     "不要直接解释完整真相。",
-    "如果用户的问题与汤底无关，回答“无关”。",
-    "如果汤底不足以判断，回答“无关”。",
+    "如果用户的问题与当前题目汤底无关，回答“无关”。",
+    "如果汤底信息不足以判断，回答“无关”。",
     "如果用户的问题部分正确、部分错误，或不能简单归为肯定/否定，回答“是也不是”。",
+    "请先在内部完成以下检查，再输出最终 JSON：",
+    "1) 只提取当前汤底里的事实点。",
+    "2) 判断用户问题是否在这些事实点可判定范围内。",
+    "3) 若不可判定，输出“无关”。",
+    "4) 禁止因为“常见题型”而猜测。",
     payload.hintEnabled
       ? "当前已开启提示模式，可以额外给一句非常短的 hint，但不要剧透关键反转。"
       : "当前未开启提示模式，不要输出 hint。",
@@ -101,9 +135,11 @@ function buildPrompt(payload) {
   ].join("\n");
 
   const user = [
+    `题目ID：${payload.storyId}`,
     `汤面：${payload.surface}`,
     `汤底：${payload.truth}`,
     `用户本次问题：${payload.question}`,
+    "请严格按当前题目作答，不要套用其他题目的答案。",
   ].join("\n\n");
 
   return { system, user };
@@ -135,10 +171,14 @@ function parseModelOutput(content, hintEnabled) {
 }
 
 function extractAnswer(content) {
-  if (content.includes("是也不是")) return "是也不是";
-  if (content.includes("不是")) return "不是";
-  if (content.includes("无关")) return "无关";
-  if (content.includes("是")) return "是";
+  const normalized = String(content || "").replace(/\s+/g, "");
+  if (normalized.includes("是也不是")) return "是也不是";
+  if (normalized.includes("\"answer\":\"不是\"") || normalized.includes("答案:不是")) return "不是";
+  if (normalized.includes("\"answer\":\"无关\"") || normalized.includes("答案:无关")) return "无关";
+  if (normalized.includes("\"answer\":\"是\"") || normalized.includes("答案:是")) return "是";
+  if (normalized.includes("不是")) return "不是";
+  if (normalized.includes("无关")) return "无关";
+  if (normalized.includes("是")) return "是";
   return "无关";
 }
 
