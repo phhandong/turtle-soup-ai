@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
-  Bot,
   ExternalLink,
   Eye,
   Home,
@@ -48,21 +47,16 @@ function HomePage() {
     <main className="app-shell">
       <section className="topbar">
         <div>
-          <p className="eyebrow">Turtle Soup AI</p>
-          <h1>海龟汤 AI</h1>
+          <p className="eyebrow">Turtle Soup</p>
+          <h1>海龟汤问答</h1>
         </div>
-        <a className="api-pill" href="#api-note">
-          <Bot size={18} />
-          单轮问答
-        </a>
+        <span className="api-pill">开始推理</span>
       </section>
 
       <section className="intro-band">
         <div className="intro-copy">
-          <h2>选择一道汤题，向 AI 主持人提问。</h2>
-          <p>
-            页面会保留你的问答记录，但每次请求只发送当前汤面、汤底和本次问题，避免历史对话影响判断。
-          </p>
+          <h2>选择一道汤题，开始提问。</h2>
+          <p>用尽量清晰的问题一步步还原真相。</p>
         </div>
       </section>
 
@@ -83,15 +77,6 @@ function HomePage() {
         {filteredStories.map((story) => (
           <StoryCard key={story.id} story={story} />
         ))}
-      </section>
-
-      <section className="api-note" id="api-note">
-        <h2>API 接入说明</h2>
-        <p>
-          配置 <code>VITE_AI_API_URL</code> 后，前端会向你的接口发送
-          <code>storyId</code>、<code>surface</code>、<code>truth</code>、<code>question</code> 和
-          <code>hintEnabled</code>。如果未配置接口，网站会使用本地演示回答。
-        </p>
       </section>
     </main>
   );
@@ -159,7 +144,7 @@ function StoryPage({ story }: { story: Story }) {
       ]);
       setQuestion("");
     } catch {
-      setError("AI 暂时没有回应，请稍后再试。");
+      setError("暂时没有回应，请稍后再试。");
     } finally {
       setIsLoading(false);
     }
@@ -208,7 +193,7 @@ function StoryPage({ story }: { story: Story }) {
         <div className="panel-toolbar">
           <div>
             <h2>问答</h2>
-            <p>历史记录只显示在页面上，不会发送给 AI。</p>
+            <p>先从关键线索入手，再逐步缩小范围。</p>
           </div>
           <label className="switch">
             <input checked={hintEnabled} type="checkbox" onChange={(event) => setHintEnabled(event.target.checked)} />
@@ -313,7 +298,7 @@ function ChatBubble({ entry }: { entry: ChatEntry }) {
         <p>{entry.question}</p>
       </div>
       <div className={`answer-bubble ${entry.answer.label}`}>
-        <span>AI 答</span>
+        <span>回答</span>
         <strong>{entry.answer.answer}</strong>
         {entry.answer.hint ? <p>{entry.answer.hint}</p> : null}
       </div>

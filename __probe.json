@@ -1,0 +1,7 @@
+{
+  "storyId": "test-1",
+  "surface": "一个人走进酒吧要水，喝完后离开。",
+  "truth": "他打嗝，酒保吓他治好了。",
+  "question": "和打嗝有关吗？",
+  "hintEnabled": false
+}

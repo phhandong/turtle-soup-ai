@@ -25,10 +25,10 @@ npm run build
 
 ## API 配置
 
-复制 `.env.example` 为 `.env.local`，配置你的 API 地址：
+复制 `.env.example` 为 `.env.local`，只填你的 API 网关地址：
 
 ```bash
-VITE_AI_API_URL=https://your-api.example.com/ask
+VITE_AI_API_URL=
 ```
 
 前端不会保存大模型 API Key。请在你的 API 网关或 Serverless 函数中保存密钥。
@@ -45,10 +45,10 @@ https://token-plan-cn.xiaomimimo.com/v1
 
 推荐做法：
 
-1. 部署 `api-proxy/cloudflare-worker.js` 到 Cloudflare Workers。
-2. 在 Worker 的环境变量或 Secret 中配置：
-   - `MIMO_API_KEY`：你的 Dedicated API Key
-   - `MIMO_MODEL`：可选，例如 `MiMo-V2.5-Pro`
+1. 进入 `api-proxy`，复制 `.dev.vars.example` 为 `.dev.vars`，只填写：
+   - `MIMO_API_KEY=你的 Dedicated API Key`
+   - `MIMO_MODEL` 默认已配好，可按需改
+2. 使用 `wrangler` 部署 `api-proxy/cloudflare-worker.js`。
 3. Worker 部署后，把 Worker URL 写进本地 `.env.local`：
 
 ```bash

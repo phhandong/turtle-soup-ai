@@ -9,7 +9,7 @@ export const stories: Story[] = [
       "男人曾在海难中幸存。当时同伴骗他说吃的是海龟肉，实际上他吃下的是已经死去妻子的肉。多年后他在餐厅喝到真正的海龟汤，意识到当年的肉不是海龟肉，于是崩溃自杀。",
     difficulty: "medium",
     tags: ["经典", "悬疑", "反转"],
-    summary: "经典海龟汤题型，适合测试 AI 主持人的克制程度。",
+    summary: "经典海龟汤题型，适合体验层层反转的推理过程。",
     source: {
       platform: "民间流传",
       authorName: "来源未知",

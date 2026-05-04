@@ -67,7 +67,7 @@ function mockAiResponse(request: AiRequest): Promise<AiResponse> {
   };
 
   if (request.hintEnabled) {
-    result.hint = "这个提示来自本地演示模式；接入 API 后会由你的 AI 后端生成。";
+    result.hint = "试着换个角度，把问题问得更具体一些。";
   }
 
   return new Promise<AiResponse>((resolve) => {
