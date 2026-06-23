@@ -14,6 +14,8 @@ import { askAi } from "./services/aiClient";
 import type { ChatEntry, Difficulty, Story } from "./types/story";
 import { getCurrentStoryId, getStoryPath } from "./utils/routes";
 
+const STORY_PROGRESS_STORAGE_PREFIX = "turtle-soup-history:";
+
 const difficultyText: Record<Difficulty, string> = {
   easy: "简单",
   medium: "中等",
@@ -35,7 +37,7 @@ function App() {
     return <MissingStory />;
   }
 
-  return story ? <StoryPage story={story} /> : <HomePage />;
+  return story ? <StoryPage key={story.id} story={story} /> : <HomePage />;
 }
 
 function HomePage() {
@@ -105,11 +107,15 @@ function StoryCard({ story }: { story: Story }) {
 
 function StoryPage({ story }: { story: Story }) {
   const [question, setQuestion] = useState("");
-  const [entries, setEntries] = useState<ChatEntry[]>([]);
+  const [entries, setEntries] = useState<ChatEntry[]>(() => loadStoryProgress(story.id).entries);
   const [hintEnabled, setHintEnabled] = useState(false);
-  const [showTruth, setShowTruth] = useState(false);
+  const [showTruth, setShowTruth] = useState(() => loadStoryProgress(story.id).showTruth);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    saveStoryProgress(story.id, { entries, showTruth });
+  }, [entries, showTruth, story.id]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -246,6 +252,7 @@ function StoryPage({ story }: { story: Story }) {
         className="reset-button"
         type="button"
         onClick={() => {
+          clearStoryProgress(story.id);
           setEntries([]);
           setShowTruth(false);
           setError("");
@@ -303,6 +310,80 @@ function ChatBubble({ entry }: { entry: ChatEntry }) {
         {entry.answer.hint ? <p>{entry.answer.hint}</p> : null}
       </div>
     </article>
+  );
+}
+
+function getStoryProgressStorageKey(storyId: string) {
+  return `${STORY_PROGRESS_STORAGE_PREFIX}${storyId}`;
+}
+
+function loadStoryProgress(storyId: string): { entries: ChatEntry[]; showTruth: boolean } {
+  if (typeof window === "undefined") {
+    return { entries: [], showTruth: false };
+  }
+
+  try {
+    const raw = window.localStorage.getItem(getStoryProgressStorageKey(storyId));
+    if (!raw) {
+      return { entries: [], showTruth: false };
+    }
+
+    const parsed = JSON.parse(raw) as Partial<{ entries: unknown; showTruth: unknown }>;
+    return {
+      entries: Array.isArray(parsed.entries) ? parsed.entries.filter(isChatEntry) : [],
+      showTruth: parsed.showTruth === true,
+    };
+  } catch {
+    return { entries: [], showTruth: false };
+  }
+}
+
+function saveStoryProgress(storyId: string, progress: { entries: ChatEntry[]; showTruth: boolean }) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      getStoryProgressStorageKey(storyId),
+      JSON.stringify({
+        version: 1,
+        entries: progress.entries,
+        showTruth: progress.showTruth,
+        updatedAt: new Date().toISOString(),
+      }),
+    );
+  } catch {
+    // localStorage can be unavailable in private mode or full storage.
+  }
+}
+
+function clearStoryProgress(storyId: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(getStoryProgressStorageKey(storyId));
+  } catch {
+    // Ignore storage failures; the in-memory reset still works.
+  }
+}
+
+function isChatEntry(value: unknown): value is ChatEntry {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const entry = value as Partial<ChatEntry>;
+  return (
+    typeof entry.id === "string" &&
+    typeof entry.question === "string" &&
+    typeof entry.askedAt === "string" &&
+    !!entry.answer &&
+    typeof entry.answer === "object" &&
+    typeof entry.answer.answer === "string" &&
+    typeof entry.answer.label === "string"
   );
 }
 

@@ -1,5 +1,7 @@
 const MIMO_BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1";
 const MIMO_MODEL = "mimo-v2.5-pro";
+const DEBUG_TIMING_QUERY = "debugTiming";
+const DEBUG_TIMING_HEADER = "x-debug-timing";
 
 const answerMap = {
   "是": "yes",
@@ -10,31 +12,44 @@ const answerMap = {
 
 export default {
   async fetch(request, env) {
+    const timings = createTimingCollector();
+    const debugTiming = wantsDebugTiming(request);
+    const respond = (body, status, meta) =>
+      withCors(withDebugTiming(body, timings, debugTiming, meta), status, timings.toHeaders());
+
     if (request.method === "OPTIONS") {
-      return withCors(null, 204);
+      return respond(null, 204);
     }
 
     if (request.method !== "POST") {
-      return withCors({ error: "Method not allowed" }, 405);
+      return respond({ error: "Method not allowed" }, 405);
     }
 
     if (!env.MIMO_API_KEY) {
-      return withCors({ error: "Missing MIMO_API_KEY" }, 500);
+      return respond({ error: "Missing MIMO_API_KEY" }, 500);
     }
 
     let payload;
     try {
+      const startedAt = performance.now();
       payload = await request.json();
+      timings.add("request_json", startedAt);
     } catch {
-      return withCors({ error: "Invalid JSON body" }, 400);
+      return respond({ error: "Invalid JSON body" }, 400);
     }
 
+    const validateStartedAt = performance.now();
     const validationError = validatePayload(payload);
+    timings.add("validate", validateStartedAt);
     if (validationError) {
-      return withCors({ error: validationError }, 400);
+      return respond({ error: validationError }, 400);
     }
 
+    const promptStartedAt = performance.now();
     const prompt = buildPrompt(payload);
+    timings.add("build_prompt", promptStartedAt);
+
+    const upstreamStartedAt = performance.now();
     const upstream = await fetch(`${MIMO_BASE_URL}/chat/completions`, {
       method: "POST",
       headers: {
@@ -56,16 +71,40 @@ export default {
         ],
       }),
     });
+    timings.add("upstream_fetch", upstreamStartedAt);
 
     if (!upstream.ok) {
-      return withCors({ error: "AI upstream request failed" }, 502);
+      let upstreamBody = "";
+      if (debugTiming) {
+        const upstreamErrorStartedAt = performance.now();
+        upstreamBody = await upstream.text();
+        timings.add("upstream_error_body", upstreamErrorStartedAt);
+      }
+
+      return respond(
+        { error: "AI upstream request failed" },
+        502,
+        {
+          upstreamStatus: upstream.status,
+          upstreamStatusText: upstream.statusText,
+          upstreamBody: upstreamBody.slice(0, 500),
+        },
+      );
     }
 
+    const upstreamJsonStartedAt = performance.now();
     const data = await upstream.json();
+    timings.add("upstream_json", upstreamJsonStartedAt);
     const content = data?.choices?.[0]?.message?.content ?? "";
-    const parsed = parseModelOutput(content, payload.hintEnabled);
 
-    return withCors(parsed, 200);
+    const parseStartedAt = performance.now();
+    const parsed = parseModelOutput(content, payload.hintEnabled);
+    timings.add("parse_model_output", parseStartedAt);
+
+    return respond(parsed, 200, {
+      upstreamStatus: upstream.status,
+      model: env.MIMO_MODEL || MIMO_MODEL,
+    });
   },
 };
 
@@ -161,14 +200,62 @@ function normalizeAnswer(answer) {
   return Object.hasOwn(answerMap, answer) ? answer : "无关";
 }
 
-function withCors(body, status) {
+function wantsDebugTiming(request) {
+  const url = new URL(request.url);
+  return url.searchParams.get(DEBUG_TIMING_QUERY) === "1" || request.headers.get(DEBUG_TIMING_HEADER) === "1";
+}
+
+function createTimingCollector() {
+  const startedAt = performance.now();
+  const entries = [];
+
+  return {
+    add(name, stepStartedAt) {
+      entries.push({
+        name,
+        dur: performance.now() - stepStartedAt,
+      });
+    },
+    snapshot() {
+      const total = performance.now() - startedAt;
+      return Object.fromEntries([...entries, { name: "total", dur: total }].map(({ name, dur }) => [name, roundMs(dur)]));
+    },
+    toHeaders() {
+      return {
+        "Server-Timing": [...entries, { name: "total", dur: performance.now() - startedAt }]
+          .map(({ name, dur }) => `${name};dur=${roundMs(dur)}`)
+          .join(", "),
+      };
+    },
+  };
+}
+
+function withDebugTiming(body, timings, enabled, meta = {}) {
+  if (!enabled || !body || typeof body !== "object") return body;
+
+  return {
+    ...body,
+    debug: {
+      timingsMs: timings.snapshot(),
+      ...meta,
+    },
+  };
+}
+
+function roundMs(value) {
+  return Math.round(value * 10) / 10;
+}
+
+function withCors(body, status, extraHeaders = {}) {
   return new Response(body ? JSON.stringify(body) : null, {
     status,
     headers: {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Allow-Headers": "Content-Type, X-Debug-Timing",
+      "Access-Control-Expose-Headers": "Server-Timing",
       "Content-Type": "application/json; charset=utf-8",
+      ...extraHeaders,
     },
   });
 }
