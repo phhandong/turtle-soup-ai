@@ -1,4 +1,4 @@
-const MIMO_BASE_URL = "https://axonhub.808039.xyz/v1";
+const MIMO_BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1";
 const MIMO_MODEL = "mimo-v2.5-pro";
 
 const answerMap = {
