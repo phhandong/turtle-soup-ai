@@ -18,7 +18,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -76,7 +77,8 @@ h2 {
 .secondary-button,
 .reset-button,
 .ask-form button,
-.source-actions a {
+.source-actions a,
+.model-select {
   display: inline-flex;
   min-height: 42px;
   align-items: center;
@@ -95,7 +97,8 @@ h2 {
 .icon-button,
 .secondary-button,
 .reset-button,
-.source-actions a {
+.source-actions a,
+.model-select {
   padding: 0 14px;
 }
 
@@ -306,6 +309,25 @@ code {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.model-select {
+  background: #f9faf8;
+}
+
+.model-select span {
+  color: #566267;
+  font-size: 0.82rem;
+}
+
+.model-select select {
+  max-width: 150px;
+  border: 0;
+  background: transparent;
+  color: #1f2a2e;
+  cursor: pointer;
+  font-weight: 800;
+  outline: none;
 }
 
 .panel-toolbar {

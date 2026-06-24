@@ -11,10 +11,18 @@ import {
 } from "lucide-react";
 import { stories, getStoryById } from "./data/stories";
 import { askAi } from "./services/aiClient";
-import type { ChatEntry, Difficulty, Story } from "./types/story";
+import type { AiModelId, ChatEntry, Difficulty, Story } from "./types/story";
 import { getCurrentStoryId, getStoryPath } from "./utils/routes";
 
 const STORY_PROGRESS_STORAGE_PREFIX = "turtle-soup-history:";
+const MODEL_STORAGE_KEY = "turtle-soup-model";
+const DEFAULT_AI_MODEL: AiModelId = "mimo-v2.5-pro";
+
+const modelOptions: Array<{ id: AiModelId; label: string }> = [
+  { id: "mimo-v2.5-pro", label: "MIMO v2.5 Pro" },
+  { id: "agnes-2.0-flash", label: "Agnes 2.0 Flash" },
+  { id: "agnes-1.5-flash", label: "Agnes 1.5 Flash" },
+];
 
 const difficultyText: Record<Difficulty, string> = {
   easy: "简单",
@@ -24,6 +32,11 @@ const difficultyText: Record<Difficulty, string> = {
 
 function App() {
   const [storyId, setStoryId] = useState<string | null>(() => getCurrentStoryId());
+  const [selectedModel, setSelectedModel] = useState<AiModelId>(() => loadSelectedModel());
+
+  useEffect(() => {
+    saveSelectedModel(selectedModel);
+  }, [selectedModel]);
 
   useEffect(() => {
     const handleHashChange = () => setStoryId(getCurrentStoryId());
@@ -37,7 +50,16 @@ function App() {
     return <MissingStory />;
   }
 
-  return story ? <StoryPage key={story.id} story={story} /> : <HomePage />;
+  return story ? (
+    <StoryPage
+      key={story.id}
+      onSelectedModelChange={setSelectedModel}
+      selectedModel={selectedModel}
+      story={story}
+    />
+  ) : (
+    <HomePage />
+  );
 }
 
 function HomePage() {
@@ -105,7 +127,15 @@ function StoryCard({ story }: { story: Story }) {
   );
 }
 
-function StoryPage({ story }: { story: Story }) {
+function StoryPage({
+  story,
+  selectedModel,
+  onSelectedModelChange,
+}: {
+  story: Story;
+  selectedModel: AiModelId;
+  onSelectedModelChange: (model: AiModelId) => void;
+}) {
   const [question, setQuestion] = useState("");
   const [entries, setEntries] = useState<ChatEntry[]>(() => loadStoryProgress(story.id).entries);
   const [hintEnabled, setHintEnabled] = useState(false);
@@ -136,6 +166,7 @@ function StoryPage({ story }: { story: Story }) {
         truth: story.truth,
         question: trimmedQuestion,
         hintEnabled,
+        model: selectedModel,
         mode: "single_turn_lateral_thinking_host",
       });
 
@@ -193,7 +224,11 @@ function StoryPage({ story }: { story: Story }) {
         <p>{story.surface}</p>
       </section>
 
-      <SourcePanel source={story.source} />
+      <SourcePanel
+        onSelectedModelChange={onSelectedModelChange}
+        selectedModel={selectedModel}
+        source={story.source}
+      />
 
       <section className="game-panel">
         <div className="panel-toolbar">
@@ -265,7 +300,15 @@ function StoryPage({ story }: { story: Story }) {
   );
 }
 
-function SourcePanel({ source }: { source: Story["source"] }) {
+function SourcePanel({
+  source,
+  selectedModel,
+  onSelectedModelChange,
+}: {
+  source: Story["source"];
+  selectedModel: AiModelId;
+  onSelectedModelChange: (model: AiModelId) => void;
+}) {
   return (
     <section className="source-panel">
       <div>
@@ -286,6 +329,25 @@ function SourcePanel({ source }: { source: Story["source"] }) {
             <ExternalLink size={15} />
           </a>
         ) : null}
+        <label className="model-select">
+          <span>模型</span>
+          <select
+            aria-label="选择 AI 模型"
+            onChange={(event) => {
+              const nextModel = event.target.value;
+              if (isAiModelId(nextModel)) {
+                onSelectedModelChange(nextModel);
+              }
+            }}
+            value={selectedModel}
+          >
+            {modelOptions.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
         {source.originalUrl ? (
           <a href={source.originalUrl} rel="noreferrer" target="_blank">
             原始来源
@@ -315,6 +377,35 @@ function ChatBubble({ entry }: { entry: ChatEntry }) {
 
 function getStoryProgressStorageKey(storyId: string) {
   return `${STORY_PROGRESS_STORAGE_PREFIX}${storyId}`;
+}
+
+function loadSelectedModel(): AiModelId {
+  if (typeof window === "undefined") {
+    return DEFAULT_AI_MODEL;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(MODEL_STORAGE_KEY);
+    return isAiModelId(raw) ? raw : DEFAULT_AI_MODEL;
+  } catch {
+    return DEFAULT_AI_MODEL;
+  }
+}
+
+function saveSelectedModel(model: AiModelId) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(MODEL_STORAGE_KEY, model);
+  } catch {
+    // The in-memory selection still applies for this session.
+  }
+}
+
+function isAiModelId(value: string | null): value is AiModelId {
+  return modelOptions.some((option) => option.id === value);
 }
 
 function loadStoryProgress(storyId: string): { entries: ChatEntry[]; showTruth: boolean } {

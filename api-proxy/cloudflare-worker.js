@@ -1,5 +1,10 @@
 const MIMO_BASE_URL = "https://token-plan-cn.xiaomimimo.com/v1";
 const MIMO_MODEL = "mimo-v2.5-pro";
+const AGNES_BASE_URL = "https://apihub.agnes-ai.com/v1";
+const AGNES_API_KEY = "sk-zhafY2pJ10V6owwddeI2Cp6OTECk91z81WwJfXrlZl9lmnI9";
+const AGNES_DEFAULT_MODEL = "agnes-2.0-flash";
+const AGNES_MODELS = new Set([AGNES_DEFAULT_MODEL, "agnes-1.5-flash"]);
+const SUPPORTED_MODELS = new Set([MIMO_MODEL, ...AGNES_MODELS]);
 const DEBUG_TIMING_QUERY = "debugTiming";
 const DEBUG_TIMING_HEADER = "x-debug-timing";
 
@@ -25,10 +30,6 @@ export default {
       return respond({ error: "Method not allowed" }, 405);
     }
 
-    if (!env.MIMO_API_KEY) {
-      return respond({ error: "Missing MIMO_API_KEY" }, 500);
-    }
-
     let payload;
     try {
       const startedAt = performance.now();
@@ -49,52 +50,15 @@ export default {
     const prompt = buildPrompt(payload);
     timings.add("build_prompt", promptStartedAt);
 
-    const upstreamStartedAt = performance.now();
-    const upstream = await fetch(`${MIMO_BASE_URL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env.MIMO_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: env.MIMO_MODEL || MIMO_MODEL,
-        temperature: 0.1,
-        messages: [
-          {
-            role: "system",
-            content: prompt.system,
-          },
-          {
-            role: "user",
-            content: prompt.user,
-          },
-        ],
-      }),
-    });
-    timings.add("upstream_fetch", upstreamStartedAt);
-
-    if (!upstream.ok) {
-      let upstreamBody = "";
-      if (debugTiming) {
-        const upstreamErrorStartedAt = performance.now();
-        upstreamBody = await upstream.text();
-        timings.add("upstream_error_body", upstreamErrorStartedAt);
-      }
-
-      return respond(
-        { error: "AI upstream request failed" },
-        502,
-        {
-          upstreamStatus: upstream.status,
-          upstreamStatusText: upstream.statusText,
-          upstreamBody: upstreamBody.slice(0, 500),
-        },
-      );
+    const requestedModel = getRequestedModel(payload);
+    const upstreamResult = await fetchUpstream(buildChannels(env, requestedModel), prompt, timings, debugTiming);
+    if (!upstreamResult.ok) {
+      return respond({ error: "AI upstream request failed" }, 502, {
+        upstreamAttempts: upstreamResult.attempts,
+      });
     }
 
-    const upstreamJsonStartedAt = performance.now();
-    const data = await upstream.json();
-    timings.add("upstream_json", upstreamJsonStartedAt);
+    const { channel, data, response } = upstreamResult;
     const content = data?.choices?.[0]?.message?.content ?? "";
 
     const parseStartedAt = performance.now();
@@ -102,11 +66,125 @@ export default {
     timings.add("parse_model_output", parseStartedAt);
 
     return respond(parsed, 200, {
-      upstreamStatus: upstream.status,
-      model: env.MIMO_MODEL || MIMO_MODEL,
+      upstreamChannel: channel.name,
+      upstreamStatus: response.status,
+      model: channel.model,
+      fallbackUsed: channel.name !== "mimo",
     });
   },
 };
+
+function buildChannels(env, requestedModel) {
+  if (isAgnesModel(requestedModel)) {
+    return [buildAgnesChannel(env, requestedModel)];
+  }
+
+  const channels = [];
+  if (env.MIMO_API_KEY) {
+    channels.push({
+      name: "mimo",
+      baseUrl: MIMO_BASE_URL,
+      apiKey: env.MIMO_API_KEY,
+      model: env.MIMO_MODEL || MIMO_MODEL,
+    });
+  }
+
+  channels.push(buildAgnesChannel(env, env.AGNES_MODEL || AGNES_DEFAULT_MODEL));
+
+  return channels;
+}
+
+function buildAgnesChannel(env, model) {
+  return {
+    name: "agnes-free",
+    baseUrl: env.AGNES_BASE_URL || AGNES_BASE_URL,
+    apiKey: env.AGNES_API_KEY || AGNES_API_KEY,
+    model,
+  };
+}
+
+async function fetchUpstream(channels, prompt, timings, debugTiming) {
+  const attempts = [];
+
+  for (const channel of channels) {
+    const timingKey = channel.name.replace(/[^a-z0-9_]/gi, "_");
+    let response;
+
+    try {
+      const upstreamStartedAt = performance.now();
+      response = await fetch(`${trimTrailingSlash(channel.baseUrl)}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${channel.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: channel.model,
+          temperature: 0.1,
+          messages: [
+            {
+              role: "system",
+              content: prompt.system,
+            },
+            {
+              role: "user",
+              content: prompt.user,
+            },
+          ],
+        }),
+      });
+      timings.add(`upstream_fetch_${timingKey}`, upstreamStartedAt);
+    } catch (error) {
+      attempts.push({
+        channel: channel.name,
+        error: getErrorMessage(error),
+      });
+      continue;
+    }
+
+    if (!response.ok) {
+      const attempt = {
+        channel: channel.name,
+        status: response.status,
+        statusText: response.statusText,
+      };
+
+      if (debugTiming) {
+        const upstreamErrorStartedAt = performance.now();
+        const upstreamBody = await response.text();
+        timings.add(`upstream_error_body_${timingKey}`, upstreamErrorStartedAt);
+        attempt.body = upstreamBody.slice(0, 500);
+      }
+
+      attempts.push(attempt);
+      continue;
+    }
+
+    try {
+      const upstreamJsonStartedAt = performance.now();
+      const data = await response.json();
+      timings.add(`upstream_json_${timingKey}`, upstreamJsonStartedAt);
+      return { ok: true, channel, data, response, attempts };
+    } catch (error) {
+      attempts.push({
+        channel: channel.name,
+        status: response.status,
+        statusText: response.statusText,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  return { ok: false, attempts };
+}
+
+function trimTrailingSlash(value) {
+  return String(value || "").replace(/\/+$/, "");
+}
+
+function getErrorMessage(error) {
+  return error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200);
+}
 
 function validatePayload(payload) {
   if (!payload || typeof payload !== "object") return "Missing payload";
@@ -115,7 +193,18 @@ function validatePayload(payload) {
   if (!payload.truth || typeof payload.truth !== "string") return "Missing truth";
   if (!payload.question || typeof payload.question !== "string") return "Missing question";
   if (payload.question.length > 160) return "Question is too long";
+  if (payload.model !== undefined && (typeof payload.model !== "string" || !SUPPORTED_MODELS.has(payload.model))) {
+    return "Invalid model";
+  }
   return "";
+}
+
+function getRequestedModel(payload) {
+  return SUPPORTED_MODELS.has(payload.model) ? payload.model : MIMO_MODEL;
+}
+
+function isAgnesModel(model) {
+  return AGNES_MODELS.has(model);
 }
 
 function buildPrompt(payload) {
