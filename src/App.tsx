@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
+  ChevronDown,
   ExternalLink,
   Eye,
   Home,
@@ -20,6 +21,7 @@ const DEFAULT_AI_MODEL: AiModelId = "mimo-v2.5-pro";
 
 const modelOptions: Array<{ id: AiModelId; label: string }> = [
   { id: "mimo-v2.5-pro", label: "MIMO v2.5 Pro" },
+  { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
   { id: "agnes-2.0-flash", label: "Agnes 2.0 Flash" },
   { id: "agnes-1.5-flash", label: "Agnes 1.5 Flash" },
 ];
@@ -139,6 +141,7 @@ function StoryPage({
   const [question, setQuestion] = useState("");
   const [entries, setEntries] = useState<ChatEntry[]>(() => loadStoryProgress(story.id).entries);
   const [hintEnabled, setHintEnabled] = useState(false);
+  const [revealMode, setRevealMode] = useState(false);
   const [showTruth, setShowTruth] = useState(() => loadStoryProgress(story.id).showTruth);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
@@ -166,6 +169,7 @@ function StoryPage({
         truth: story.truth,
         question: trimmedQuestion,
         hintEnabled,
+        revealMode,
         model: selectedModel,
         mode: "single_turn_lateral_thinking_host",
       });
@@ -180,6 +184,10 @@ function StoryPage({
         },
       ]);
       setQuestion("");
+      if (revealMode && answer.answer === "还原正确") {
+        window.alert("恭喜通关🎉");
+        setShowTruth(true);
+      }
     } catch {
       setError("暂时没有回应，请稍后再试。");
     } finally {
@@ -236,10 +244,21 @@ function StoryPage({
             <h2>问答</h2>
             <p>先从关键线索入手，再逐步缩小范围。</p>
           </div>
-          <label className="switch">
-            <input checked={hintEnabled} type="checkbox" onChange={(event) => setHintEnabled(event.target.checked)} />
-            <span>提示模式</span>
-          </label>
+          <div className="mode-controls">
+            <label className="switch">
+              <input checked={hintEnabled} type="checkbox" onChange={(event) => setHintEnabled(event.target.checked)} />
+              <span>提示模式</span>
+            </label>
+            <label className="switch">
+              <input
+                checked={revealMode}
+                disabled={isLoading}
+                type="checkbox"
+                onChange={(event) => setRevealMode(event.target.checked)}
+              />
+              <span>揭示模式</span>
+            </label>
+          </div>
         </div>
 
         <div className="chat-list" aria-live="polite">
@@ -259,7 +278,7 @@ function StoryPage({
             disabled={isLoading}
             maxLength={160}
             onChange={(event) => setQuestion(event.target.value)}
-            placeholder="例如：这个男人认识死者吗？"
+            placeholder={revealMode ? "输入你还原出的完整真相" : "例如：这个男人认识死者吗？"}
             value={question}
           />
           <button disabled={isLoading} type="submit">
@@ -270,7 +289,7 @@ function StoryPage({
         {error ? <p className="error-text">{error}</p> : null}
       </section>
 
-      <section className="truth-panel">
+      <section className={showTruth ? "truth-panel revealed" : "truth-panel"}>
         <div>
           <h2>汤底</h2>
           <p>{showTruth ? story.truth : "答案已隐藏。确认想看完整真相时再打开。"}</p>
@@ -290,6 +309,7 @@ function StoryPage({
           clearStoryProgress(story.id);
           setEntries([]);
           setShowTruth(false);
+          setRevealMode(false);
           setError("");
         }}
       >
@@ -329,25 +349,7 @@ function SourcePanel({
             <ExternalLink size={15} />
           </a>
         ) : null}
-        <label className="model-select">
-          <span>模型</span>
-          <select
-            aria-label="选择 AI 模型"
-            onChange={(event) => {
-              const nextModel = event.target.value;
-              if (isAiModelId(nextModel)) {
-                onSelectedModelChange(nextModel);
-              }
-            }}
-            value={selectedModel}
-          >
-            {modelOptions.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <ModelPicker selectedModel={selectedModel} onSelectedModelChange={onSelectedModelChange} />
         {source.originalUrl ? (
           <a href={source.originalUrl} rel="noreferrer" target="_blank">
             原始来源
@@ -356,6 +358,78 @@ function SourcePanel({
         ) : null}
       </div>
     </section>
+  );
+}
+
+function ModelPicker({
+  selectedModel,
+  onSelectedModelChange,
+}: {
+  selectedModel: AiModelId;
+  onSelectedModelChange: (model: AiModelId) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const selectedOption = modelOptions.find((option) => option.id === selectedModel) ?? modelOptions[0];
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!pickerRef.current?.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen]);
+
+  return (
+    <div className="model-picker" ref={pickerRef}>
+      <button
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        className="model-select"
+        type="button"
+        onClick={() => setIsOpen((current) => !current)}
+      >
+        <span>模型</span>
+        <strong>{selectedOption.label}</strong>
+        <ChevronDown className={isOpen ? "select-chevron open" : "select-chevron"} size={18} />
+      </button>
+      {isOpen ? (
+        <div className="model-menu" role="listbox">
+          {modelOptions.map((option) => (
+            <button
+              aria-selected={option.id === selectedModel}
+              className={option.id === selectedModel ? "model-option active" : "model-option"}
+              key={option.id}
+              role="option"
+              type="button"
+              onClick={() => {
+                onSelectedModelChange(option.id);
+                setIsOpen(false);
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

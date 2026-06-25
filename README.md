@@ -25,8 +25,34 @@ npm install
 npm run dev
 ```
 
+后台启动本地服务：
+
+```bash
+npm run dev:start
+```
+
+停止后台本地服务：
+
+```bash
+npm run dev:stop
+```
+
 ## 构建
 
 ```bash
 npm run build
 ```
+
+## Cloudflare Worker API key
+
+Worker 会从 Cloudflare 环境变量读取模型 API key。Unity2 通道使用：
+
+```bash
+cd api-proxy
+npx wrangler secret put UNITY_API_KEY
+```
+
+`api-proxy/wrangler.toml` 已配置：
+
+- `UNITY_BASE_URL=https://api.unity2.ai`
+- `UNITY_MODEL=claude-opus-4-8`
