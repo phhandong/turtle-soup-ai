@@ -55,6 +55,10 @@ function App() {
     return () => window.removeEventListener('hashchange', handleHashChange)
   }, [])
 
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+  }, [storyId])
+
   const story = storyId ? getStoryById(storyId) : undefined
 
   if (storyId && !story) {
@@ -423,7 +427,7 @@ function StoryPage({
                 type="checkbox"
                 onChange={(event) => setRevealMode(event.target.checked)}
               />
-              <span>结局模式</span>
+              <span>揭晓模式</span>
             </label>
           </div>
         </div>
