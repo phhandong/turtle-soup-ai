@@ -26,6 +26,7 @@ body {
 
 button,
 input,
+textarea,
 select {
   font: inherit;
 }
@@ -172,6 +173,29 @@ h2 {
   color: #fff;
 }
 
+.chip.difficulty-chip.easy {
+  border-color: rgba(22, 83, 52, 0.22);
+  background: #e7f7ee;
+  color: #165334;
+}
+
+.chip.difficulty-chip.medium {
+  border-color: rgba(105, 68, 0, 0.22);
+  background: #fff0cf;
+  color: #694400;
+}
+
+.chip.difficulty-chip.hard {
+  border-color: rgba(125, 35, 28, 0.22);
+  background: #ffe5e2;
+  color: #7d231c;
+}
+
+.chip.difficulty-chip.active {
+  border-color: #1f2a2e;
+  box-shadow: inset 0 0 0 1px #1f2a2e;
+}
+
 .story-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -197,6 +221,11 @@ h2 {
   transition:
     transform 160ms ease,
     box-shadow 160ms ease;
+}
+
+.story-card.completed {
+  border-color: rgba(64, 130, 188, 0.22);
+  background: #eaf5ff;
 }
 
 .story-card:hover {
@@ -520,21 +549,25 @@ code {
 .ask-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+  align-items: end;
   gap: 10px;
   padding-top: 4px;
 }
 
-.ask-form input {
+.ask-form textarea {
   min-height: 48px;
+  max-height: 150px;
   width: 100%;
   border: 1px solid rgba(32, 33, 36, 0.18);
   border-radius: 8px;
-  padding: 0 14px;
+  padding: 12px 14px;
+  line-height: 1.45;
   outline: none;
+  overflow-y: hidden;
+  resize: vertical;
 }
 
-.ask-form input:focus {
+.ask-form textarea:focus {
   border-color: #2f6f62;
   box-shadow: 0 0 0 3px rgba(47, 111, 98, 0.12);
 }
@@ -546,7 +579,7 @@ code {
 }
 
 .ask-form button:disabled,
-.ask-form input:disabled,
+.ask-form textarea:disabled,
 .switch:has(input:disabled) {
   cursor: wait;
   opacity: 0.68;
