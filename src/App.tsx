@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ChevronDown,
+  CheckCircle2,
+  CircleHelp,
   ExternalLink,
   Eye,
   Home,
@@ -9,6 +11,7 @@ import {
   RefreshCw,
   Send,
   Sparkles,
+  Shuffle,
 } from 'lucide-react'
 import { stories, getStoryById } from './data/stories'
 import { askAi } from './services/aiClient'
@@ -17,13 +20,13 @@ import { getCurrentStoryId, getStoryPath } from './utils/routes'
 
 const STORY_PROGRESS_STORAGE_PREFIX = 'turtle-soup-history:'
 const MODEL_STORAGE_KEY = 'turtle-soup-model'
-const DEFAULT_AI_MODEL: AiModelId = 'mimo-v2.5-pro'
+const DEFAULT_AI_MODEL: AiModelId = 'agnes-2.0-flash'
 
 const modelOptions: Array<{ id: AiModelId; label: string }> = [
-  { id: 'mimo-v2.5-pro', label: 'MIMO v2.5 Pro' },
-  { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
   { id: 'agnes-2.0-flash', label: 'Agnes 2.0 Flash' },
   { id: 'agnes-1.5-flash', label: 'Agnes 1.5 Flash' },
+  { id: 'mimo-v2.5-pro', label: 'MIMO v2.5 Pro' },
+  { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
 ]
 
 const difficultyText: Record<Difficulty, string> = {
@@ -98,6 +101,7 @@ function HomePage() {
       ),
     [],
   )
+  const completedCount = completedStoryIds.size
 
   function openRandomStory() {
     const availableStories = stories.filter(
@@ -117,8 +121,12 @@ function HomePage() {
         <div>
           <p className="eyebrow">Turtle Soup</p>
           <h1>海龟汤问答</h1>
+          <p className="topbar-subtitle">
+            像翻案卷一样挑选谜题，向 AI 主持人追问线索。
+          </p>
         </div>
         <button className="api-pill" type="button" onClick={openRandomStory}>
+          <Shuffle size={18} />
           随机做一题
         </button>
       </section>
@@ -127,6 +135,20 @@ function HomePage() {
         <div className="intro-copy">
           <h2>选择一道汤题，开始提问。</h2>
           <p>用尽量清晰的问题一步步还原真相。</p>
+        </div>
+        <div className="intro-ledger" aria-label="题库概览">
+          <span>
+            <strong>{stories.length}</strong>
+            汤题
+          </span>
+          <span>
+            <strong>{filteredStories.length}</strong>
+            当前筛选
+          </span>
+          <span>
+            <strong>{completedCount}</strong>
+            已揭晓
+          </span>
         </div>
       </section>
 
@@ -176,6 +198,8 @@ function HomePage() {
           />
         ))}
       </section>
+
+      <SiteFooter />
     </main>
   )
 }
@@ -187,10 +211,18 @@ function StoryCard({ completed, story }: { completed: boolean; story: Story }) {
       href={getStoryPath(story.id)}
     >
       <div className="card-header">
-        <span className={`difficulty ${story.difficulty}`}>
-          {difficultyText[story.difficulty]}
-        </span>
-        <span className="source-mini">{story.source.platform}</span>
+        <div className="card-badges">
+          <span className={`difficulty ${story.difficulty}`}>
+            {difficultyText[story.difficulty]}
+          </span>
+          <span className="source-mini">{story.source.platform}</span>
+        </div>
+        {completed ? (
+          <span className="completed-mark">
+            <CheckCircle2 size={15} />
+            已揭晓
+          </span>
+        ) : null}
       </div>
       <h2>{story.title}</h2>
       <p>{story.summary ?? story.surface}</p>
@@ -367,10 +399,14 @@ function StoryPage({
 
       <section className="game-panel">
         <div className="panel-toolbar">
-          <div>
+          <div className="panel-heading">
             <h2>问答</h2>
             <p>先从关键线索入手，再逐步缩小范围。</p>
           </div>
+          <span className="entry-count">
+            <CircleHelp size={16} />
+            {entries.length} 轮
+          </span>
           <div className="mode-controls">
             <label className="switch">
               <input
@@ -464,6 +500,8 @@ function StoryPage({
         <RefreshCw size={18} />
         重新开始当前题目
       </button>
+
+      <SiteFooter />
     </main>
   )
 }
@@ -724,6 +762,41 @@ function isChatEntry(value: unknown): value is ChatEntry {
     typeof entry.answer === 'object' &&
     typeof entry.answer.answer === 'string' &&
     typeof entry.answer.label === 'string'
+  )
+}
+
+function SiteFooter() {
+  return (
+    <footer className="site-footer">
+      <p>
+        本站代码以{' '}
+        <a
+          href="https://github.com/phhandong/turtle-soup-ai/blob/main/LICENSE"
+          rel="noreferrer"
+          target="_blank"
+        >
+          GNU GPL v3
+        </a>
+        <a
+          href="https://github.com/phhandong/turtle-soup-ai"
+          rel="noreferrer"
+          target="_blank"
+        >
+          源码仓库
+        </a>
+      </p>
+      <p className="footer-note">
+        汤题内容改写自各来源站点，版权归原站点所有；开源协议仅适用于本站代码。
+      </p>
+      <a
+        className="deerflow-signature"
+        href="https://deerflow.tech"
+        rel="noreferrer"
+        target="_blank"
+      >
+        Created By Deerflow
+      </a>
+    </footer>
   )
 }
 
