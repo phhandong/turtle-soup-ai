@@ -244,7 +244,7 @@ export const stories: Story[] = [
     summary: '典型的默认假设陷阱，答案依赖题目没有明说的时间条件。',
     source: {
       platform: 'CSUN Science Ref',
-      authorName: 'Unknown',
+      authorName: 'Unknown Author',
       originalUrl:
         'https://www.csun.edu/science/ref/questions/lateral_thinking/index.htm',
       license: '公开网页资料改写，原始版权归来源站点',

@@ -22,10 +22,6 @@ const labelByAnswer = {
 } as const
 
 export async function askAi(request: AiRequest): Promise<AiResponse> {
-  if (isAgnesModel(request.model)) {
-    return askAgnesDirect(request)
-  }
-
   const configuredApiUrl = import.meta.env.VITE_AI_API_URL as string | undefined
   const apiUrl =
     configuredApiUrl && !configuredApiUrl.includes('your-api.example.com')

@@ -8,6 +8,9 @@ const UNITY_BASE_URL = 'https://api.unity2.ai'
 const UNITY_MODEL = 'claude-opus-4-8'
 const UNITY_MODELS = new Set([UNITY_MODEL])
 const SUPPORTED_MODELS = new Set([MIMO_MODEL, ...AGNES_MODELS, ...UNITY_MODELS])
+const MIMO_TIMEOUT_MS = 3000
+const AGNES_TIMEOUT_MS = 10000
+const UNITY_TIMEOUT_MS = 15000
 const DEBUG_TIMING_QUERY = 'debugTiming'
 const DEBUG_TIMING_HEADER = 'x-debug-timing'
 
@@ -103,6 +106,7 @@ function buildChannels(env, requestedModel) {
       baseUrl: MIMO_BASE_URL,
       apiKey: env.MIMO_API_KEY,
       model: env.MIMO_MODEL || MIMO_MODEL,
+      timeoutMs: getTimeoutMs(env.MIMO_TIMEOUT_MS, MIMO_TIMEOUT_MS),
     })
   }
 
@@ -117,6 +121,7 @@ function buildAgnesChannel(env, model) {
     baseUrl: env.AGNES_BASE_URL || AGNES_BASE_URL,
     apiKey: env.AGNES_API_KEY || AGNES_API_KEY,
     model,
+    timeoutMs: getTimeoutMs(env.AGNES_TIMEOUT_MS, AGNES_TIMEOUT_MS),
   }
 }
 
@@ -126,6 +131,7 @@ function buildUnityChannel(env, model) {
     baseUrl: env.UNITY_BASE_URL || UNITY_BASE_URL,
     apiKey: env.UNITY_API_KEY,
     model: env.UNITY_MODEL || model,
+    timeoutMs: getTimeoutMs(env.UNITY_TIMEOUT_MS, UNITY_TIMEOUT_MS),
   }
 }
 
@@ -146,7 +152,7 @@ async function fetchUpstream(channels, prompt, timings, debugTiming) {
 
     try {
       const upstreamStartedAt = performance.now()
-      response = await fetch(
+      response = await fetchWithTimeout(
         `${trimTrailingSlash(channel.baseUrl)}/chat/completions`,
         {
           method: 'POST',
@@ -157,6 +163,7 @@ async function fetchUpstream(channels, prompt, timings, debugTiming) {
           body: JSON.stringify({
             model: channel.model,
             temperature: 0.1,
+            max_tokens: prompt.maxTokens,
             messages: [
               {
                 role: 'system',
@@ -169,6 +176,7 @@ async function fetchUpstream(channels, prompt, timings, debugTiming) {
             ],
           }),
         },
+        channel.timeoutMs,
       )
       timings.add(`upstream_fetch_${timingKey}`, upstreamStartedAt)
     } catch (error) {
@@ -213,6 +221,31 @@ async function fetchUpstream(channels, prompt, timings, debugTiming) {
   }
 
   return { ok: false, attempts }
+}
+
+async function fetchWithTimeout(url, init, timeoutMs) {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`Timed out after ${timeoutMs}ms`)
+    }
+
+    throw error
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
+function getTimeoutMs(value, fallback) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
 function trimTrailingSlash(value) {
@@ -314,7 +347,11 @@ function buildPrompt(payload) {
     `${payload.revealMode ? '用户还原' : '问题'}：${payload.question}`,
   ].join('\n\n')
 
-  return { system, user }
+  return {
+    system,
+    user,
+    maxTokens: payload.hintEnabled ? 80 : 24,
+  }
 }
 
 function parseModelOutput(content, hintEnabled) {
