@@ -36,6 +36,7 @@ const difficultyText: Record<Difficulty, string> = {
 }
 
 const difficultyOptions: Difficulty[] = ['easy', 'medium', 'hard']
+const pageSizeOptions = [10, 20, 50] as const
 
 function App() {
   const [storyId, setStoryId] = useState<string | null>(() =>
@@ -82,6 +83,12 @@ function HomePage() {
   const [activeDifficulty, setActiveDifficulty] = useState<Difficulty | '全部'>(
     '全部',
   )
+  const [searchQuery, setSearchQuery] = useState('')
+  const [showCompleted, setShowCompleted] = useState(false)
+  const [showUncompleted, setShowUncompleted] = useState(false)
+  const [pageSize, setPageSize] =
+    useState<(typeof pageSizeOptions)[number]>(10)
+  const [currentPage, setCurrentPage] = useState(1)
   const tags = useMemo(
     () => [
       '全部',
@@ -89,23 +96,72 @@ function HomePage() {
     ],
     [],
   )
-  const filteredStories = stories.filter((story) => {
-    const matchesTag = activeTag === '全部' || story.tags.includes(activeTag)
-    const matchesDifficulty =
-      activeDifficulty === '全部' || story.difficulty === activeDifficulty
-
-    return matchesTag && matchesDifficulty
-  })
   const completedStoryIds = useMemo(
     () =>
       new Set(
         stories
           .filter((story) => isStoryCompleted(story.id))
           .map((story) => story.id),
-      ),
+    ),
     [],
   )
+  const filteredStories = useMemo(
+    () =>
+      stories.filter((story) => {
+        const completed = completedStoryIds.has(story.id)
+        const matchesTag = activeTag === '全部' || story.tags.includes(activeTag)
+        const matchesDifficulty =
+          activeDifficulty === '全部' || story.difficulty === activeDifficulty
+        const matchesRevealStatus =
+          (!showCompleted && !showUncompleted) ||
+          (showCompleted && showUncompleted) ||
+          (showCompleted && completed) ||
+          (showUncompleted && !completed)
+        const matchesSearch = storyMatchesSearch(story, searchQuery)
+
+        return (
+          matchesTag &&
+          matchesDifficulty &&
+          matchesRevealStatus &&
+          matchesSearch
+        )
+      }),
+    [
+      activeDifficulty,
+      activeTag,
+      completedStoryIds,
+      searchQuery,
+      showCompleted,
+      showUncompleted,
+    ],
+  )
   const completedCount = completedStoryIds.size
+  const pageCount = Math.max(1, Math.ceil(filteredStories.length / pageSize))
+  const visiblePageItems = getVisiblePageItems(currentPage, pageCount)
+  const pageStartIndex = (currentPage - 1) * pageSize
+  const paginatedStories = filteredStories.slice(
+    pageStartIndex,
+    pageStartIndex + pageSize,
+  )
+  const visibleStart = filteredStories.length === 0 ? 0 : pageStartIndex + 1
+  const visibleEnd = Math.min(pageStartIndex + pageSize, filteredStories.length)
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [
+    activeDifficulty,
+    activeTag,
+    pageSize,
+    searchQuery,
+    showCompleted,
+    showUncompleted,
+  ])
+
+  useEffect(() => {
+    if (currentPage > pageCount) {
+      setCurrentPage(pageCount)
+    }
+  }, [currentPage, pageCount])
 
   function openRandomStory() {
     const availableStories = stories.filter(
@@ -146,13 +202,43 @@ function HomePage() {
             汤题
           </span>
           <span>
-            <strong>{filteredStories.length}</strong>
-            当前筛选
-          </span>
-          <span>
             <strong>{completedCount}</strong>
             已揭晓
           </span>
+        </div>
+      </section>
+
+      <section className="search-panel" aria-label="搜索和显示选项">
+        <label className="search-field">
+          <span>模糊搜索</span>
+          <input
+            type="search"
+            value={searchQuery}
+            placeholder="搜标题、汤面、摘要、标签或来源"
+            onChange={(event) => setSearchQuery(event.target.value)}
+          />
+        </label>
+
+        <div className="home-controls">
+          <fieldset className="reveal-filter">
+            <legend>揭晓状态</legend>
+            <label>
+              <input
+                checked={showCompleted}
+                type="checkbox"
+                onChange={(event) => setShowCompleted(event.target.checked)}
+              />
+              已揭晓
+            </label>
+            <label>
+              <input
+                checked={showUncompleted}
+                type="checkbox"
+                onChange={(event) => setShowUncompleted(event.target.checked)}
+              />
+              未揭晓
+            </label>
+          </fieldset>
         </div>
       </section>
 
@@ -193,19 +279,179 @@ function HomePage() {
         ))}
       </section>
 
-      <section className="story-grid" aria-label="海龟汤题目列表">
-        {filteredStories.map((story) => (
-          <StoryCard
-            completed={completedStoryIds.has(story.id)}
-            key={story.id}
-            story={story}
-          />
-        ))}
+      <section className="result-toolbar" aria-label="分页信息">
+        <div className="result-summary">
+          <p>
+            {filteredStories.length === 0
+              ? '没有找到匹配的汤题。'
+              : '显示第 ' +
+                visibleStart +
+                '-' +
+                visibleEnd +
+                ' 道，共 ' +
+                filteredStories.length +
+                ' 道'}
+          </p>
+          <label className="page-size-control compact">
+            <span>每页展示</span>
+            <select
+              value={pageSize}
+              onChange={(event) =>
+                setPageSize(
+                  Number(event.target.value) as (typeof pageSizeOptions)[number],
+                )
+              }
+            >
+              {pageSizeOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option} 道题
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="pagination" aria-label="题目分页">
+          <button
+            className="pagination-button"
+            disabled={currentPage === 1}
+            type="button"
+            onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+          >
+            上一页
+          </button>
+          <div className="pagination-pages">
+            {visiblePageItems.map((item, index) =>
+              item === 'ellipsis' ? (
+                <span aria-hidden="true" key={`ellipsis-${index}`}>
+                  …
+                </span>
+              ) : (
+                <button
+                  aria-current={item === currentPage ? 'page' : undefined}
+                  className={
+                    item === currentPage
+                      ? 'pagination-button active'
+                      : 'pagination-button'
+                  }
+                  key={item}
+                  type="button"
+                  onClick={() => setCurrentPage(item)}
+                >
+                  {item}
+                </button>
+              ),
+            )}
+          </div>
+          <button
+            className="pagination-button"
+            disabled={currentPage === pageCount}
+            type="button"
+            onClick={() =>
+              setCurrentPage((page) => Math.min(pageCount, page + 1))
+            }
+          >
+            下一页
+          </button>
+        </div>
       </section>
+
+      {paginatedStories.length > 0 ? (
+        <section className="story-grid" aria-label="海龟汤题目列表">
+          {paginatedStories.map((story) => (
+            <StoryCard
+              completed={completedStoryIds.has(story.id)}
+              key={story.id}
+              story={story}
+            />
+          ))}
+        </section>
+      ) : (
+        <section className="empty-results" aria-live="polite">
+          <CircleHelp size={24} />
+          <p>换个关键词，或清空筛选条件再试。</p>
+        </section>
+      )}
 
       <SiteFooter />
     </main>
   )
+}
+
+type PageItem = number | 'ellipsis'
+
+function storyMatchesSearch(story: Story, query: string) {
+  const normalizedQuery = normalizeSearchText(query)
+
+  if (!normalizedQuery) {
+    return true
+  }
+
+  const searchableText = normalizeSearchText(
+    [
+      story.id,
+      story.title,
+      story.surface,
+      story.summary,
+      story.difficulty,
+      difficultyText[story.difficulty],
+      story.tags.join(' '),
+      story.source.platform,
+      story.source.authorName,
+      story.source.note,
+    ]
+      .filter(Boolean)
+      .join(' '),
+  )
+  const tokens = normalizedQuery.split(' ').filter(Boolean)
+
+  return tokens.every(
+    (token) =>
+      searchableText.includes(token) || isSubsequence(token, searchableText),
+  )
+}
+
+function normalizeSearchText(value: string) {
+  return value.toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+function isSubsequence(needle: string, haystack: string) {
+  let needleIndex = 0
+
+  for (const character of haystack) {
+    if (character === needle[needleIndex]) {
+      needleIndex += 1
+      if (needleIndex === needle.length) {
+        return true
+      }
+    }
+  }
+
+  return needle.length === 0
+}
+
+function getVisiblePageItems(currentPage: number, pageCount: number): PageItem[] {
+  if (pageCount <= 7) {
+    return Array.from({ length: pageCount }, (_, index) => index + 1)
+  }
+
+  const pages = Array.from(
+    new Set([1, currentPage - 1, currentPage, currentPage + 1, pageCount]),
+  )
+    .filter((page) => page >= 1 && page <= pageCount)
+    .sort((a, b) => a - b)
+  const items: PageItem[] = []
+  let previousPage = 0
+
+  for (const page of pages) {
+    if (previousPage && page - previousPage > 1) {
+      items.push('ellipsis')
+    }
+
+    items.push(page)
+    previousPage = page
+  }
+
+  return items
 }
 
 function StoryCard({ completed, story }: { completed: boolean; story: Story }) {
@@ -792,14 +1038,6 @@ function SiteFooter() {
       <p className="footer-note">
         汤题内容改写自各来源站点，版权归原站点所有；开源协议仅适用于本站代码。
       </p>
-      <a
-        className="deerflow-signature"
-        href="https://deerflow.tech"
-        rel="noreferrer"
-        target="_blank"
-      >
-        Created By Deerflow
-      </a>
     </footer>
   )
 }
