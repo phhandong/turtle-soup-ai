@@ -9,3 +9,6 @@ api-proxy/.s
 .dev-server.pid
 .dev-server.*.log
 raw_stories/**
+.htaccess/**
+.user.ini
+404.html
