@@ -4,4 +4,9 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   base: process.env.VITE_BASE_PATH ?? "/",
+  preview: {
+    host: '127.0.0.1',
+    port: 4173,
+    allowedHosts: ['turtle.handong-joy.xyz'],
+  },
 });

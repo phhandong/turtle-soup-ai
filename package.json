@@ -12,12 +12,13 @@
     "test:api": "node --test api-proxy/index.test.mjs",
     "check:api": "node --check api-proxy/index.mjs && node --check api-proxy/proxy-core.mjs",
     "preview": "vite preview --configLoader native",
-    "deploy": "npm run build -- --base=/turtle-soup-ai/ && gh-pages -d dist"
+    "deploy": "npm run build -- --base=/turtle-soup-ai/ && gh-pages -d dist",
+    "start": "vite preview --configLoader native --host 127.0.0.1 --port 4173"
   },
   "dependencies": {
+    "lucide-react": "^0.544.0",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1",
-    "lucide-react": "^0.544.0"
+    "react-dom": "^19.1.1"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
