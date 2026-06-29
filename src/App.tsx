@@ -24,8 +24,7 @@ const DEFAULT_AI_MODEL: AiModelId = 'agnes-2.0-flash'
 
 const modelOptions: Array<{ id: AiModelId; label: string }> = [
   { id: 'agnes-2.0-flash', label: 'Agnes 2.0 Flash' },
-  { id: 'agnes-1.5-flash', label: 'Agnes 1.5 Flash' },
-  { id: 'mimo-v2.5-pro', label: 'MIMO v2.5 Pro' },
+  { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
   { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
 ]
 
@@ -86,8 +85,7 @@ function HomePage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [showCompleted, setShowCompleted] = useState(false)
   const [showUncompleted, setShowUncompleted] = useState(false)
-  const [pageSize, setPageSize] =
-    useState<(typeof pageSizeOptions)[number]>(10)
+  const [pageSize, setPageSize] = useState<(typeof pageSizeOptions)[number]>(10)
   const [currentPage, setCurrentPage] = useState(1)
   const tags = useMemo(
     () => [
@@ -102,14 +100,15 @@ function HomePage() {
         stories
           .filter((story) => isStoryCompleted(story.id))
           .map((story) => story.id),
-    ),
+      ),
     [],
   )
   const filteredStories = useMemo(
     () =>
       stories.filter((story) => {
         const completed = completedStoryIds.has(story.id)
-        const matchesTag = activeTag === '全部' || story.tags.includes(activeTag)
+        const matchesTag =
+          activeTag === '全部' || story.tags.includes(activeTag)
         const matchesDifficulty =
           activeDifficulty === '全部' || story.difficulty === activeDifficulty
         const matchesRevealStatus =
@@ -194,7 +193,6 @@ function HomePage() {
       <section className="intro-band">
         <div className="intro-copy">
           <h2>选择一道汤题，开始提问。</h2>
-          <p>用尽量清晰的问题一步步还原真相。</p>
         </div>
         <div className="intro-ledger" aria-label="题库概览">
           <span>
@@ -210,7 +208,7 @@ function HomePage() {
 
       <section className="search-panel" aria-label="搜索和显示选项">
         <label className="search-field">
-          <span>模糊搜索</span>
+          {/* <span>模糊搜索</span> */}
           <input
             type="search"
             value={searchQuery}
@@ -221,7 +219,7 @@ function HomePage() {
 
         <div className="home-controls">
           <fieldset className="reveal-filter">
-            <legend>揭晓状态</legend>
+            {/* <legend>揭晓状态</legend> */}
             <label>
               <input
                 checked={showCompleted}
@@ -248,14 +246,13 @@ function HomePage() {
             className={tag === activeTag ? 'chip active' : 'chip'}
             key={tag}
             type="button"
-            onClick={() => setActiveTag(tag)}
+            onClick={() =>
+              setActiveTag((currentTag) => (currentTag === tag ? '全部' : tag))
+            }
           >
             {tag}
           </button>
         ))}
-      </section>
-
-      <section className="filter-row" aria-label="题目难度筛选">
         <button
           className={activeDifficulty === '全部' ? 'chip active' : 'chip'}
           type="button"
@@ -272,12 +269,37 @@ function HomePage() {
             }
             key={difficulty}
             type="button"
-            onClick={() => setActiveDifficulty(difficulty)}
+            onClick={() =>
+              setActiveDifficulty((currentDifficulty) =>
+                currentDifficulty === difficulty ? '全部' : difficulty,
+              )
+            }
           >
             {difficultyText[difficulty]}
           </button>
         ))}
       </section>
+
+      {/* <section className="filter-row" aria-label="题目难度筛选">
+
+      </section> */}
+
+      {paginatedStories.length > 0 ? (
+        <section className="story-grid" aria-label="海龟汤题目列表">
+          {paginatedStories.map((story) => (
+            <StoryCard
+              completed={completedStoryIds.has(story.id)}
+              key={story.id}
+              story={story}
+            />
+          ))}
+        </section>
+      ) : (
+        <section className="empty-results" aria-live="polite">
+          <CircleHelp size={24} />
+          <p>换个关键词，或清空筛选条件再试。</p>
+        </section>
+      )}
 
       <section className="result-toolbar" aria-label="分页信息">
         <div className="result-summary">
@@ -298,7 +320,9 @@ function HomePage() {
               value={pageSize}
               onChange={(event) =>
                 setPageSize(
-                  Number(event.target.value) as (typeof pageSizeOptions)[number],
+                  Number(
+                    event.target.value,
+                  ) as (typeof pageSizeOptions)[number],
                 )
               }
             >
@@ -354,23 +378,6 @@ function HomePage() {
           </button>
         </div>
       </section>
-
-      {paginatedStories.length > 0 ? (
-        <section className="story-grid" aria-label="海龟汤题目列表">
-          {paginatedStories.map((story) => (
-            <StoryCard
-              completed={completedStoryIds.has(story.id)}
-              key={story.id}
-              story={story}
-            />
-          ))}
-        </section>
-      ) : (
-        <section className="empty-results" aria-live="polite">
-          <CircleHelp size={24} />
-          <p>换个关键词，或清空筛选条件再试。</p>
-        </section>
-      )}
 
       <SiteFooter />
     </main>
@@ -429,7 +436,10 @@ function isSubsequence(needle: string, haystack: string) {
   return needle.length === 0
 }
 
-function getVisiblePageItems(currentPage: number, pageCount: number): PageItem[] {
+function getVisiblePageItems(
+  currentPage: number,
+  pageCount: number,
+): PageItem[] {
   if (pageCount <= 7) {
     return Array.from({ length: pageCount }, (_, index) => index + 1)
   }
@@ -641,12 +651,6 @@ function StoryPage({
         <p>{story.surface}</p>
       </section>
 
-      <SourcePanel
-        onSelectedModelChange={onSelectedModelChange}
-        selectedModel={selectedModel}
-        source={story.source}
-      />
-
       <section className="game-panel">
         <div className="panel-toolbar">
           <div className="panel-heading">
@@ -658,6 +662,10 @@ function StoryPage({
             {entries.length} 轮
           </span>
           <div className="mode-controls">
+            <ModelPicker
+              selectedModel={selectedModel}
+              onSelectedModelChange={onSelectedModelChange}
+            />
             <label className="switch">
               <input
                 checked={hintEnabled}
@@ -736,6 +744,8 @@ function StoryPage({
         ) : null}
       </section>
 
+      {showTruth ? <SourcePanel source={story.source} /> : null}
+
       <button
         className="reset-button"
         type="button"
@@ -756,15 +766,7 @@ function StoryPage({
   )
 }
 
-function SourcePanel({
-  source,
-  selectedModel,
-  onSelectedModelChange,
-}: {
-  source: Story['source']
-  selectedModel: AiModelId
-  onSelectedModelChange: (model: AiModelId) => void
-}) {
+function SourcePanel({ source }: { source: Story['source'] }) {
   return (
     <section className="source-panel">
       <div>
@@ -785,10 +787,6 @@ function SourcePanel({
             <ExternalLink size={15} />
           </a>
         ) : null}
-        <ModelPicker
-          selectedModel={selectedModel}
-          onSelectedModelChange={onSelectedModelChange}
-        />
         {source.originalUrl ? (
           <a href={source.originalUrl} rel="noreferrer" target="_blank">
             原始来源
@@ -1038,6 +1036,21 @@ function SiteFooter() {
       <p className="footer-note">
         汤题内容改写自各来源站点，版权归原站点所有；开源协议仅适用于本站代码。
       </p>
+      <div className="footer-sponsors" aria-label="本站赞助者">
+        <span>感谢赞助</span>
+        <a
+          className="footer-sponsor"
+          href="https://github.com/MengAnXiang"
+          rel="noreferrer"
+          target="_blank"
+        >
+          <img
+            src="https://github.com/MengAnXiang.png?size=96"
+            alt="MengAnXiang 的 GitHub 头像"
+          />
+          <span>MengAnXiang</span>
+        </a>
+      </div>
     </footer>
   )
 }

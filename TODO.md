@@ -6,8 +6,8 @@
 - [App.tsx](/e:/Python_Project/turtle-soup-ai/src/App.tsx:13)：首页直接 import 全量题库
 - [App.tsx](/e:/Python_Project/turtle-soup-ai/src/App.tsx:85)：筛选是前端 `stories.filter`
 - [App.tsx](/e:/Python_Project/turtle-soup-ai/src/App.tsx:294)：前端把 `truth` 发给 AI
-- [aiClient.ts](/e:/Python_Project/turtle-soup-ai/src/services/aiClient.ts:6)：API key 硬编码，必须轮换
-- [cloudflare-worker.js](/e:/Python_Project/turtle-soup-ai/api-proxy/cloudflare-worker.js:234)：Worker 信任客户端传来的 `truth`
+- [aiClient.ts](/e:/Python_Project/turtle-soup-ai/src/services/aiClient.ts:3)：前端已只保留阿里云函数地址，不再包含模型 API key
+- [proxy-core.mjs](/e:/Python_Project/turtle-soup-ai/api-proxy/proxy-core.mjs:272)：函数仍信任客户端传来的 `truth`
 
 建议改法，按优先级：
 
@@ -19,7 +19,7 @@
    - 题库放 DB/CMS/JSON 静态分片皆可
 
    小规模 100-300 题：`public/stories/index.json` + 按 id lazy load。  
-   大规模 1000+：Cloudflare D1 / Supabase / Postgres / CMS。
+   大规模 1000+：阿里云 RDS / Tablestore / Supabase / Postgres / CMS。
 
 2. AI 判题改成服务端取汤底
 
@@ -32,7 +32,7 @@
    }
    ```
 
-   Worker 根据 `storyId` 查 DB 里的 `truth`，再组 prompt。客户端永远不碰 `truth`，除非用户点“查看汤底”时请求公开接口。
+   阿里云函数根据 `storyId` 查 DB 里的 `truth`，再组 prompt。客户端永远不碰 `truth`，除非用户点“查看汤底”时请求公开接口。
 
 3. 首页加分页、搜索、索引
 
@@ -78,16 +78,10 @@
 
    聊天记录可继续按 storyId 存，但要限长。更大规模用 IndexedDB 或账号后端同步。
 
-7. Prompt 逻辑去重
+7. 密钥后续处理
 
-   `aiClient.ts` 和 Worker 里有一份很像的 prompt 构造。scale 后会分叉。建议只保留 Worker 版本，前端只请求 API。
-
-8. 密钥必须处理
-
-   当前 Agnes key 出现在前端和 Worker 源码里。这个不是 scale 问题，是上线安全硬伤。应：
+   Agnes key 曾出现在前端和 Worker 源码及 Git 历史里。当前代码已改为只读函数环境变量，但仍应：
    - 轮换已暴露 key
-   - 前端删除直连 Agnes fallback
-   - Worker 只读环境变量 secret
    - 加 rate limit / abuse guard
 
 最小迁移路线：
@@ -98,4 +92,4 @@
 - 第四步：加内容 schema + 导入脚本。
 - 第五步：需要运营后台时再接 CMS。
 
-架构目标：前端管展示，Worker 管判题和密钥，DB/CMS 管题库。题库变大后，这条边界最值钱。
+架构目标：前端管展示，阿里云函数管判题和密钥，DB/CMS 管题库。题库变大后，这条边界最值钱。

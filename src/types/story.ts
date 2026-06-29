@@ -25,7 +25,10 @@ export type AnswerLabel = "yes" | "no" | "both" | "irrelevant" | "solved";
 
 export type AiAnswerText = "是" | "不是" | "是也不是" | "无关" | "还原正确";
 
-export type AiModelId = "mimo-v2.5-pro" | "claude-opus-4-8" | "agnes-2.0-flash" | "agnes-1.5-flash";
+export type AiModelId =
+  | "agnes-2.0-flash"
+  | "deepseek-v4-flash"
+  | "claude-opus-4-8";
 
 export type AiRequest = {
   storyId: string;

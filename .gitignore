@@ -3,6 +3,7 @@ dist
 .env
 .env.local
 api-proxy/.dev.vars
+api-proxy/.s
 .DS_Store
 *.tsbuildinfo
 .dev-server.pid

@@ -1,18 +1,27 @@
-const MIMO_BASE_URL = 'https://token-plan-cn.xiaomimimo.com/v1'
-const MIMO_MODEL = 'mimo-v2.5-pro'
 const AGNES_BASE_URL = 'https://apihub.agnes-ai.com/v1'
-const AGNES_API_KEY = 'sk-zhafY2pJ10V6owwddeI2Cp6OTECk91z81WwJfXrlZl9lmnI9'
 const AGNES_DEFAULT_MODEL = 'agnes-2.0-flash'
-const AGNES_MODELS = new Set([AGNES_DEFAULT_MODEL, 'agnes-1.5-flash'])
+const AGNES_MODELS = new Set([AGNES_DEFAULT_MODEL])
 const UNITY_BASE_URL = 'https://api.unity2.ai'
 const UNITY_MODEL = 'claude-opus-4-8'
 const UNITY_MODELS = new Set([UNITY_MODEL])
-const SUPPORTED_MODELS = new Set([MIMO_MODEL, ...AGNES_MODELS, ...UNITY_MODELS])
-const MIMO_TIMEOUT_MS = 3000
+const DEEPSEEK_BASE_URL = 'https://api.deepseek.com'
+const DEEPSEEK_MODEL = 'deepseek-v4-flash'
+const DEEPSEEK_MODELS = new Set([DEEPSEEK_MODEL])
+const SUPPORTED_MODELS = new Set([
+  ...AGNES_MODELS,
+  ...DEEPSEEK_MODELS,
+  ...UNITY_MODELS,
+])
 const AGNES_TIMEOUT_MS = 10000
 const UNITY_TIMEOUT_MS = 15000
+const DEEPSEEK_TIMEOUT_MS = 15000
 const DEBUG_TIMING_QUERY = 'debugTiming'
 const DEBUG_TIMING_HEADER = 'x-debug-timing'
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://turtle.handong-joy.xyz',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+]
 
 const answerMap = {
   是: 'yes',
@@ -26,15 +35,26 @@ export default {
   async fetch(request, env) {
     const timings = createTimingCollector()
     const debugTiming = wantsDebugTiming(request)
+    const requestOrigin = request.headers.get('Origin')
+    const allowedOrigin = getAllowedOrigin(requestOrigin, env.ALLOWED_ORIGINS)
     const respond = (body, status, meta) =>
       withCors(
         withDebugTiming(body, timings, debugTiming, meta),
         status,
         timings.toHeaders(),
+        allowedOrigin,
       )
+
+    if (requestOrigin && !allowedOrigin) {
+      return respond({ error: 'Origin not allowed' }, 403)
+    }
 
     if (request.method === 'OPTIONS') {
       return respond(null, 204)
+    }
+
+    if (request.method === 'GET' && new URL(request.url).pathname === '/health') {
+      return respond({ ok: true }, 200)
     }
 
     if (request.method !== 'POST') {
@@ -85,7 +105,7 @@ export default {
       upstreamChannel: channel.name,
       upstreamStatus: response.status,
       model: channel.model,
-      fallbackUsed: channel.name !== 'mimo',
+      fallbackUsed: upstreamResult.attempts.length > 0,
     })
   },
 }
@@ -99,27 +119,18 @@ function buildChannels(env, requestedModel) {
     return [buildUnityChannel(env, requestedModel)]
   }
 
-  const channels = []
-  if (env.MIMO_API_KEY) {
-    channels.push({
-      name: 'mimo',
-      baseUrl: MIMO_BASE_URL,
-      apiKey: env.MIMO_API_KEY,
-      model: env.MIMO_MODEL || MIMO_MODEL,
-      timeoutMs: getTimeoutMs(env.MIMO_TIMEOUT_MS, MIMO_TIMEOUT_MS),
-    })
+  if (isDeepSeekModel(requestedModel)) {
+    return [buildDeepSeekChannel(env, requestedModel)]
   }
 
-  channels.push(buildAgnesChannel(env, env.AGNES_MODEL || AGNES_DEFAULT_MODEL))
-
-  return channels
+  return [buildAgnesChannel(env, AGNES_DEFAULT_MODEL)]
 }
 
 function buildAgnesChannel(env, model) {
   return {
     name: 'agnes-free',
     baseUrl: env.AGNES_BASE_URL || AGNES_BASE_URL,
-    apiKey: env.AGNES_API_KEY || AGNES_API_KEY,
+    apiKey: env.AGNES_API_KEY,
     model,
     timeoutMs: getTimeoutMs(env.AGNES_TIMEOUT_MS, AGNES_TIMEOUT_MS),
   }
@@ -132,6 +143,20 @@ function buildUnityChannel(env, model) {
     apiKey: env.UNITY_API_KEY,
     model: env.UNITY_MODEL || model,
     timeoutMs: getTimeoutMs(env.UNITY_TIMEOUT_MS, UNITY_TIMEOUT_MS),
+  }
+}
+
+function buildDeepSeekChannel(env, model) {
+  return {
+    name: 'deepseek',
+    baseUrl: env.DEEPSEEK_BASE_URL || DEEPSEEK_BASE_URL,
+    apiKey: env.DEEPSEEK_API_KEY,
+    model: env.DEEPSEEK_MODEL || model,
+    timeoutMs: getTimeoutMs(env.DEEPSEEK_TIMEOUT_MS, DEEPSEEK_TIMEOUT_MS),
+    extraBody: {
+      thinking: { type: 'disabled' },
+      response_format: { type: 'json_object' },
+    },
   }
 }
 
@@ -164,6 +189,7 @@ async function fetchUpstream(channels, prompt, timings, debugTiming) {
             model: channel.model,
             temperature: 0.1,
             max_tokens: prompt.maxTokens,
+            ...channel.extraBody,
             messages: [
               {
                 role: 'system',
@@ -284,7 +310,9 @@ function validatePayload(payload) {
 }
 
 function getRequestedModel(payload) {
-  return SUPPORTED_MODELS.has(payload.model) ? payload.model : MIMO_MODEL
+  return SUPPORTED_MODELS.has(payload.model)
+    ? payload.model
+    : AGNES_DEFAULT_MODEL
 }
 
 function isAgnesModel(model) {
@@ -293,6 +321,10 @@ function isAgnesModel(model) {
 
 function isUnityModel(model) {
   return UNITY_MODELS.has(model)
+}
+
+function isDeepSeekModel(model) {
+  return DEEPSEEK_MODELS.has(model)
 }
 
 function buildPrompt(payload) {
@@ -462,16 +494,37 @@ function roundMs(value) {
   return Math.round(value * 10) / 10
 }
 
-function withCors(body, status, extraHeaders = {}) {
+function getAllowedOrigin(origin, configuredOrigins) {
+  if (!origin) return ''
+
+  const allowedOrigins = String(configuredOrigins || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+  const effectiveOrigins = allowedOrigins.length
+    ? allowedOrigins
+    : DEFAULT_ALLOWED_ORIGINS
+
+  if (effectiveOrigins.includes('*')) return '*'
+  return effectiveOrigins.includes(origin) ? origin : ''
+}
+
+function withCors(body, status, extraHeaders = {}, allowedOrigin = '') {
+  const headers = {
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Debug-Timing',
+    'Access-Control-Expose-Headers': 'Server-Timing',
+    'Content-Type': 'application/json; charset=utf-8',
+    Vary: 'Origin',
+    ...extraHeaders,
+  }
+
+  if (allowedOrigin) {
+    headers['Access-Control-Allow-Origin'] = allowedOrigin
+  }
+
   return new Response(body ? JSON.stringify(body) : null, {
     status,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, X-Debug-Timing',
-      'Access-Control-Expose-Headers': 'Server-Timing',
-      'Content-Type': 'application/json; charset=utf-8',
-      ...extraHeaders,
-    },
+    headers,
   })
 }
