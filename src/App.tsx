@@ -314,25 +314,7 @@ function HomePage() {
                 filteredStories.length +
                 ' 道'}
           </p>
-          <label className="page-size-control compact">
-            <span>每页展示</span>
-            <select
-              value={pageSize}
-              onChange={(event) =>
-                setPageSize(
-                  Number(
-                    event.target.value,
-                  ) as (typeof pageSizeOptions)[number],
-                )
-              }
-            >
-              {pageSizeOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option} 道题
-                </option>
-              ))}
-            </select>
-          </label>
+          <PageSizePicker pageSize={pageSize} onPageSizeChange={setPageSize} />
         </div>
         <div className="pagination" aria-label="题目分页">
           <button
@@ -654,13 +636,15 @@ function StoryPage({
       <section className="game-panel">
         <div className="panel-toolbar">
           <div className="panel-heading">
-            <h2>问答</h2>
+            <div className="panel-title-row">
+              <h2>问答</h2>
+              <span className="entry-count">
+                <CircleHelp size={16} />
+                {entries.length} 轮
+              </span>
+            </div>
             <p>先从关键线索入手，再逐步缩小范围。</p>
           </div>
-          <span className="entry-count">
-            <CircleHelp size={16} />
-            {entries.length} 轮
-          </span>
           <div className="mode-controls">
             <ModelPicker
               selectedModel={selectedModel}
@@ -795,6 +779,85 @@ function SourcePanel({ source }: { source: Story['source'] }) {
         ) : null}
       </div>
     </section>
+  )
+}
+
+function PageSizePicker({
+  pageSize,
+  onPageSizeChange,
+}: {
+  pageSize: (typeof pageSizeOptions)[number]
+  onPageSizeChange: (pageSize: (typeof pageSizeOptions)[number]) => void
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const pickerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!isOpen) {
+      return
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!pickerRef.current?.contains(event.target as Node)) {
+        setIsOpen(false)
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setIsOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isOpen])
+
+  return (
+    <div className="page-size-picker" ref={pickerRef}>
+      <button
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        className="page-size-select"
+        type="button"
+        onClick={() => setIsOpen((current) => !current)}
+      >
+        <span>每页展示</span>
+        <strong>{pageSize} 道题</strong>
+        <ChevronDown
+          className={isOpen ? 'select-chevron open' : 'select-chevron'}
+          size={17}
+        />
+      </button>
+      {isOpen ? (
+        <div className="page-size-menu" role="listbox">
+          {pageSizeOptions.map((option) => (
+            <button
+              aria-selected={option === pageSize}
+              className={
+                option === pageSize
+                  ? 'page-size-option active'
+                  : 'page-size-option'
+              }
+              key={option}
+              role="option"
+              type="button"
+              onClick={() => {
+                onPageSizeChange(option)
+                setIsOpen(false)
+              }}
+            >
+              <span>{option} 道题</span>
+              {option === pageSize ? <CheckCircle2 size={15} /> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   )
 }
 

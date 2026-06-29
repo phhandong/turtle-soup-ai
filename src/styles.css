@@ -495,17 +495,101 @@ h2 {
   font-weight: 780;
 }
 
-.page-size-control.compact {
-  display: flex;
-  gap: 8px;
-  align-items: center;
+.page-size-picker {
+  position: relative;
+  z-index: 3;
 }
 
-.page-size-control.compact select {
-  min-width: 112px;
-  min-height: 34px;
+.page-size-select {
+  display: inline-flex;
+  width: 100%;
+  min-height: 42px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(47, 111, 98, 0.28);
   border-radius: 999px;
-  background: rgba(255, 253, 247, 0.68);
+  padding: 0 12px 0 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 253, 247, 0.96), rgba(240, 247, 243, 0.86)),
+    var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+  box-shadow:
+    0 8px 18px rgba(23, 32, 29, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.82) inset;
+  transition:
+    transform 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.page-size-select:hover {
+  border-color: rgba(47, 111, 98, 0.46);
+  box-shadow:
+    0 10px 22px rgba(23, 32, 29, 0.11),
+    0 1px 0 rgba(255, 255, 255, 0.9) inset;
+  transform: translateY(-1px);
+}
+
+.page-size-select:focus-visible {
+  outline: 3px solid rgba(47, 111, 98, 0.18);
+  outline-offset: 2px;
+}
+
+.page-size-select span {
+  color: #66736f;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.page-size-select strong {
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.page-size-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid rgba(47, 111, 98, 0.24);
+  border-radius: 18px;
+  background: rgba(255, 253, 247, 0.98);
+  box-shadow: 0 18px 36px rgba(23, 32, 29, 0.16);
+}
+
+.page-size-option {
+  display: flex;
+  width: 100%;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-bottom: 1px solid rgba(47, 111, 98, 0.12);
+  padding: 0 13px 0 16px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 500;
+  text-align: left;
+}
+
+.page-size-option:last-child {
+  border-bottom: 0;
+}
+
+.page-size-option:hover,
+.page-size-option:focus-visible {
+  background: #e6f1ee;
+  outline: none;
+}
+
+.page-size-option.active {
+  background: #dff1e9;
+  color: var(--moss-dark);
 }
 
 .pagination,
@@ -894,10 +978,18 @@ code {
 
 .panel-heading {
   min-width: 0;
+  flex: 1 1 280px;
+}
+
+.panel-title-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
 }
 
 .panel-toolbar h2 {
-  margin-bottom: 6px;
+  margin-bottom: 0;
 }
 
 .panel-toolbar p {
@@ -907,13 +999,21 @@ code {
 
 .entry-count {
   flex: 0 0 auto;
-  gap: 6px;
-  border: 1px solid rgba(47, 111, 98, 0.22);
-  background: rgba(255, 253, 247, 0.68);
+  min-height: 32px;
+  gap: 7px;
+  border: 1px solid rgba(47, 111, 98, 0.28);
+  background:
+    linear-gradient(180deg, rgba(255, 253, 247, 0.95), rgba(234, 246, 241, 0.82)),
+    var(--paper);
   color: var(--moss-dark);
+  box-shadow:
+    0 8px 18px rgba(23, 32, 29, 0.07),
+    0 1px 0 rgba(255, 255, 255, 0.78) inset;
+  transform: translateY(-1px);
 }
 
 .mode-controls {
+  flex: 0 1 auto;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -1039,6 +1139,13 @@ code {
   margin-bottom: 0;
   line-height: 1.68;
   overflow-wrap: anywhere;
+}
+
+.question-bubble p {
+  color: #06120f;
+  font-size: 1.35rem;
+  font-weight: 950;
+  line-height: 1.38;
 }
 
 .answer-bubble strong {
@@ -1307,7 +1414,8 @@ code {
 
   .page-size-control,
   .page-size-control select,
-  .page-size-control.compact select {
+  .page-size-picker,
+  .page-size-select {
     width: 100%;
   }
 
@@ -1394,13 +1502,44 @@ code {
   }
 
   .panel-toolbar {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
     margin: -16px -16px 0;
-    padding: 18px 16px;
+    padding: 18px 16px 20px;
   }
 
-  .switch,
-  .entry-count {
+  .mode-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .mode-controls .model-picker {
+    grid-column: 1 / -1;
+  }
+
+  .switch {
     width: 100%;
     justify-content: center;
+    padding: 0 10px;
+  }
+
+  .entry-count {
+    width: auto;
+    min-width: 84px;
+    justify-content: center;
+    padding: 0 12px;
+  }
+
+  .panel-title-row {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .panel-heading {
+    flex: initial;
   }
 }

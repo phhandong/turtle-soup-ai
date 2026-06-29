@@ -1,6 +1,6 @@
 param(
   [string]$HostName = "127.0.0.1",
-  [int]$Port = 5173
+  [int]$Port = 4173
 )
 
 $ErrorActionPreference = "Stop"
