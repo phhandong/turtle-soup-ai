@@ -17,11 +17,6 @@ const UNITY_TIMEOUT_MS = 15000
 const DEEPSEEK_TIMEOUT_MS = 15000
 const DEBUG_TIMING_QUERY = 'debugTiming'
 const DEBUG_TIMING_HEADER = 'x-debug-timing'
-const DEFAULT_ALLOWED_ORIGINS = [
-  'https://turtle.handong-joy.xyz',
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-]
 
 const answerMap = {
   是: 'yes',
@@ -35,19 +30,12 @@ export default {
   async fetch(request, env) {
     const timings = createTimingCollector()
     const debugTiming = wantsDebugTiming(request)
-    const requestOrigin = request.headers.get('Origin')
-    const allowedOrigin = getAllowedOrigin(requestOrigin, env.ALLOWED_ORIGINS)
     const respond = (body, status, meta) =>
       withCors(
         withDebugTiming(body, timings, debugTiming, meta),
         status,
         timings.toHeaders(),
-        allowedOrigin,
       )
-
-    if (requestOrigin && !allowedOrigin) {
-      return respond({ error: 'Origin not allowed' }, 403)
-    }
 
     if (request.method === 'OPTIONS') {
       return respond(null, 204)
@@ -494,33 +482,15 @@ function roundMs(value) {
   return Math.round(value * 10) / 10
 }
 
-function getAllowedOrigin(origin, configuredOrigins) {
-  if (!origin) return ''
-
-  const allowedOrigins = String(configuredOrigins || '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean)
-  const effectiveOrigins = allowedOrigins.length
-    ? allowedOrigins
-    : DEFAULT_ALLOWED_ORIGINS
-
-  if (effectiveOrigins.includes('*')) return '*'
-  return effectiveOrigins.includes(origin) ? origin : ''
-}
-
-function withCors(body, status, extraHeaders = {}, allowedOrigin = '') {
+function withCors(body, status, extraHeaders = {}) {
   const headers = {
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-Debug-Timing',
     'Access-Control-Expose-Headers': 'Server-Timing',
     'Content-Type': 'application/json; charset=utf-8',
     Vary: 'Origin',
     ...extraHeaders,
-  }
-
-  if (allowedOrigin) {
-    headers['Access-Control-Allow-Origin'] = allowedOrigin
   }
 
   return new Response(body ? JSON.stringify(body) : null, {

@@ -6,13 +6,11 @@ import { handler } from './index.mjs'
 const originalFetch = globalThis.fetch
 const originalEnv = {
   AGNES_API_KEY: process.env.AGNES_API_KEY,
-  ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
 }
 
 test.afterEach(() => {
   globalThis.fetch = originalFetch
   restoreEnv('AGNES_API_KEY', originalEnv.AGNES_API_KEY)
-  restoreEnv('ALLOWED_ORIGINS', originalEnv.ALLOWED_ORIGINS)
 })
 
 test('returns a health response through the FC adapter', async () => {
@@ -22,18 +20,17 @@ test('returns a health response through the FC adapter', async () => {
   assert.deepEqual(JSON.parse(response.body), { ok: true })
 })
 
-test('rejects browser requests from an unconfigured origin', async () => {
+test('allows preflight requests from any origin', async () => {
   const response = await handler(
-    makeEvent({ method: 'POST', origin: 'https://attacker.example' }),
+    makeEvent({ method: 'OPTIONS', origin: 'https://anywhere.example' }),
   )
 
-  assert.equal(response.statusCode, 403)
-  assert.deepEqual(JSON.parse(response.body), { error: 'Origin not allowed' })
+  assert.equal(response.statusCode, 204)
+  assert.equal(response.headers['access-control-allow-origin'], '*')
 })
 
 test('proxies a request with the server-side API key', async () => {
   process.env.AGNES_API_KEY = 'server-only-test-key'
-  process.env.ALLOWED_ORIGINS = 'https://turtle.handong-joy.xyz'
   globalThis.fetch = async (url, init) => {
     assert.equal(url, 'https://apihub.agnes-ai.com/v1/chat/completions')
     assert.equal(init.headers.Authorization, 'Bearer server-only-test-key')
@@ -64,7 +61,7 @@ test('proxies a request with the server-side API key', async () => {
   )
 
   assert.equal(response.statusCode, 200)
-  assert.equal(response.headers['access-control-allow-origin'], 'https://turtle.handong-joy.xyz')
+  assert.equal(response.headers['access-control-allow-origin'], '*')
   assert.deepEqual(JSON.parse(response.body), { answer: '是', label: 'yes' })
 })
 
