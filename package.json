@@ -10,10 +10,11 @@
     "dev:stop": "powershell -ExecutionPolicy Bypass -File scripts/stop-dev.ps1",
     "build": "tsc -b && vite build --configLoader native",
     "test:api": "node --test api-proxy/index.test.mjs",
-    "check:api": "node --check api-proxy/index.mjs && node --check api-proxy/proxy-core.mjs",
+    "test:server": "node --test server/index.test.mjs",
+    "check:api": "node --check api-proxy/index.mjs && node --check api-proxy/proxy-core.mjs && node --check server/index.mjs",
     "preview": "vite preview --configLoader native",
     "deploy": "npm run build -- --base=/turtle-soup-ai/ && gh-pages -d dist",
-    "start": "vite preview --configLoader native --host 127.0.0.1 --port 4173"
+    "start": "node server/index.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.544.0",

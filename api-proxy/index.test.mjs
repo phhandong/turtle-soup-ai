@@ -6,11 +6,13 @@ import { handler } from './index.mjs'
 const originalFetch = globalThis.fetch
 const originalEnv = {
   AGNES_API_KEY: process.env.AGNES_API_KEY,
+  ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
 }
 
 test.afterEach(() => {
   globalThis.fetch = originalFetch
   restoreEnv('AGNES_API_KEY', originalEnv.AGNES_API_KEY)
+  restoreEnv('ALLOWED_ORIGINS', originalEnv.ALLOWED_ORIGINS)
 })
 
 test('returns a health response through the FC adapter', async () => {
@@ -21,12 +23,43 @@ test('returns a health response through the FC adapter', async () => {
 })
 
 test('allows preflight requests from any origin', async () => {
+  delete process.env.ALLOWED_ORIGINS
   const response = await handler(
     makeEvent({ method: 'OPTIONS', origin: 'https://anywhere.example' }),
   )
 
   assert.equal(response.statusCode, 204)
   assert.equal(response.headers['access-control-allow-origin'], '*')
+})
+
+test('allows configured origins', async () => {
+  process.env.ALLOWED_ORIGINS =
+    'https://turtle.handong-joy.xyz, http://127.0.0.1:4173'
+
+  const response = await handler(
+    makeEvent({ method: 'OPTIONS', origin: 'https://turtle.handong-joy.xyz' }),
+  )
+
+  assert.equal(response.statusCode, 204)
+  assert.equal(
+    response.headers['access-control-allow-origin'],
+    'https://turtle.handong-joy.xyz',
+  )
+})
+
+test('rejects unconfigured origins', async () => {
+  process.env.ALLOWED_ORIGINS = 'https://turtle.handong-joy.xyz'
+
+  const response = await handler(
+    makeEvent({ method: 'OPTIONS', origin: 'https://blocked.example' }),
+  )
+
+  assert.equal(response.statusCode, 403)
+  assert.equal(
+    response.headers['access-control-allow-origin'],
+    'null',
+  )
+  assert.deepEqual(JSON.parse(response.body), { error: 'Origin not allowed' })
 })
 
 test('proxies a request with the server-side API key', async () => {

@@ -30,12 +30,18 @@ export default {
   async fetch(request, env) {
     const timings = createTimingCollector()
     const debugTiming = wantsDebugTiming(request)
+    const cors = getCorsPolicy(request, env)
     const respond = (body, status, meta) =>
       withCors(
         withDebugTiming(body, timings, debugTiming, meta),
         status,
+        cors,
         timings.toHeaders(),
       )
+
+    if (!cors.allowed) {
+      return respond({ error: 'Origin not allowed' }, 403)
+    }
 
     if (request.method === 'OPTIONS') {
       return respond(null, 204)
@@ -482,9 +488,33 @@ function roundMs(value) {
   return Math.round(value * 10) / 10
 }
 
-function withCors(body, status, extraHeaders = {}) {
+function getCorsPolicy(request, env) {
+  const origin = request.headers.get('Origin')
+  const allowedOrigins = parseAllowedOrigins(env.ALLOWED_ORIGINS)
+
+  if (allowedOrigins.length === 0) {
+    return {
+      allowed: true,
+      origin: '*',
+    }
+  }
+
+  return {
+    allowed: Boolean(origin && allowedOrigins.includes(origin)),
+    origin: origin && allowedOrigins.includes(origin) ? origin : null,
+  }
+}
+
+function parseAllowedOrigins(value) {
+  return String(value || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+}
+
+function withCors(body, status, cors, extraHeaders = {}) {
   const headers = {
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': cors.origin || 'null',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-Debug-Timing',
     'Access-Control-Expose-Headers': 'Server-Timing',

@@ -1,6 +1,6 @@
 import type { AiAnswerText, AiRequest, AiResponse } from '../types/story'
 
-const defaultApiUrl = 'https://api-turtle.handong-joy.xyz'
+const defaultApiUrl = '/api/ai'
 const validAnswers = new Set<AiAnswerText>([
   '是',
   '不是',

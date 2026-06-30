@@ -25,6 +25,7 @@ resources:
         AGNES_API_KEY: ${env('AGNES_API_KEY')}
         UNITY_API_KEY: ${env('UNITY_API_KEY')}
         DEEPSEEK_API_KEY: ${env('DEEPSEEK_API_KEY')}
+        ALLOWED_ORIGINS: ${env('ALLOWED_ORIGINS')}
       triggers:
         - triggerName: httpTrigger
           triggerType: http
