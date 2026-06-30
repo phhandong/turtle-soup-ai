@@ -10,12 +10,19 @@ export type StorySource = {
   note?: string;
 };
 
+export type StoryHints = {
+  questionLimit: number;
+  hintCost: number;
+  items: [string, string, string];
+};
+
 export type Story = {
   id: string;
   title: string;
   surface: string;
   truth: string;
   difficulty: Difficulty;
+  hints?: StoryHints;
   tags: string[];
   summary?: string;
   source: StorySource;

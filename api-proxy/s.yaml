@@ -16,7 +16,7 @@ resources:
       code: ./
       handler: index.handler
       timeout: 60
-      memorySize: 512
+      memorySize: 320
       cpu: 0.35
       diskSize: 512
       instanceConcurrency: 20
