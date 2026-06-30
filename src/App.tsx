@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
+  ArrowRight,
   ChevronDown,
   CheckCircle2,
   CircleHelp,
@@ -13,6 +14,8 @@ import {
   Link2,
   RefreshCw,
   Send,
+  Settings,
+  SlidersHorizontal,
   Sparkles,
   Shuffle,
 } from 'lucide-react'
@@ -23,6 +26,7 @@ import { getCurrentStoryId, getStoryPath } from './utils/routes'
 
 const STORY_PROGRESS_STORAGE_PREFIX = 'turtle-soup-history:'
 const MODEL_STORAGE_KEY = 'turtle-soup-model'
+const GUIDE_MESSAGE_STORAGE_KEY = 'turtle-soup-guide-message'
 const DEFAULT_AI_MODEL: AiModelId = 'agnes-2.0-flash'
 
 const modelOptions: Array<{ id: AiModelId; label: string }> = [
@@ -102,6 +106,7 @@ function HomePage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [showCompleted, setShowCompleted] = useState(false)
   const [showUncompleted, setShowUncompleted] = useState(false)
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
   const [pageSize, setPageSize] = useState<(typeof pageSizeOptions)[number]>(10)
   const [currentPage, setCurrentPage] = useState(1)
   const tags = useMemo(
@@ -234,67 +239,94 @@ function HomePage() {
           />
         </label>
 
-        <div className="home-controls">
-          <fieldset className="reveal-filter">
-            {/* <legend>揭晓状态</legend> */}
-            <label>
-              <input
-                checked={showCompleted}
-                type="checkbox"
-                onChange={(event) => setShowCompleted(event.target.checked)}
-              />
-              已揭晓
-            </label>
-            <label>
-              <input
-                checked={showUncompleted}
-                type="checkbox"
-                onChange={(event) => setShowUncompleted(event.target.checked)}
-              />
-              未揭晓
-            </label>
-          </fieldset>
-        </div>
-      </section>
-
-      <section className="filter-row" aria-label="题目标签筛选">
-        {tags.map((tag) => (
-          <button
-            className={tag === activeTag ? 'chip active' : 'chip'}
-            key={tag}
-            type="button"
-            onClick={() =>
-              setActiveTag((currentTag) => (currentTag === tag ? '全部' : tag))
-            }
-          >
-            {tag}
-          </button>
-        ))}
         <button
-          className={activeDifficulty === '全部' ? 'chip active' : 'chip'}
+          aria-controls="home-filter-panel"
+          aria-expanded={isFilterPanelOpen}
+          className={
+            isFilterPanelOpen ||
+            activeTag !== '全部' ||
+            activeDifficulty !== '全部' ||
+            showCompleted ||
+            showUncompleted
+              ? 'filter-toggle active'
+              : 'filter-toggle'
+          }
           type="button"
-          onClick={() => setActiveDifficulty('全部')}
+          onClick={() => setIsFilterPanelOpen((isOpen) => !isOpen)}
         >
-          全部难度
+          <SlidersHorizontal size={18} />
+          筛选
         </button>
-        {difficultyOptions.map((difficulty) => (
-          <button
-            className={
-              activeDifficulty === difficulty
-                ? `chip difficulty-chip ${difficulty} active`
-                : `chip difficulty-chip ${difficulty}`
-            }
-            key={difficulty}
-            type="button"
-            onClick={() =>
-              setActiveDifficulty((currentDifficulty) =>
-                currentDifficulty === difficulty ? '全部' : difficulty,
-              )
-            }
-          >
-            {difficultyText[difficulty]}
-          </button>
-        ))}
+
+        {isFilterPanelOpen ? (
+          <div className="filter-tray" id="home-filter-panel">
+            <fieldset className="reveal-filter">
+              <label>
+                <input
+                  checked={showCompleted}
+                  type="checkbox"
+                  onChange={(event) => setShowCompleted(event.target.checked)}
+                />
+                已揭晓
+              </label>
+              <label>
+                <input
+                  checked={showUncompleted}
+                  type="checkbox"
+                  onChange={(event) => setShowUncompleted(event.target.checked)}
+                />
+                未揭晓
+              </label>
+            </fieldset>
+
+            <div className="filter-row" aria-label="题目标签筛选">
+              {tags.map((tag) => (
+                <button
+                  className={tag === activeTag ? 'chip active' : 'chip'}
+                  key={tag}
+                  type="button"
+                  onClick={() =>
+                    setActiveTag((currentTag) =>
+                      currentTag === tag ? '全部' : tag,
+                    )
+                  }
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+
+            <div className="filter-row" aria-label="题目难度筛选">
+              <button
+                className={
+                  activeDifficulty === '全部' ? 'chip active' : 'chip'
+                }
+                type="button"
+                onClick={() => setActiveDifficulty('全部')}
+              >
+                全部难度
+              </button>
+              {difficultyOptions.map((difficulty) => (
+                <button
+                  className={
+                    activeDifficulty === difficulty
+                      ? `chip difficulty-chip ${difficulty} active`
+                      : `chip difficulty-chip ${difficulty}`
+                  }
+                  key={difficulty}
+                  type="button"
+                  onClick={() =>
+                    setActiveDifficulty((currentDifficulty) =>
+                      currentDifficulty === difficulty ? '全部' : difficulty,
+                    )
+                  }
+                >
+                  {difficultyText[difficulty]}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </section>
 
       {/* <section className="filter-row" aria-label="题目难度筛选">
@@ -525,9 +557,14 @@ function StoryPage({
     useState<TruthDialogMode | null>(null)
   const [pendingHintIndex, setPendingHintIndex] = useState<number | null>(null)
   const [isHintTrayOpen, setIsHintTrayOpen] = useState(false)
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [showGuideMessage, setShowGuideMessage] = useState(
+    loadGuideMessagePreference,
+  )
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
   const questionInputRef = useRef<HTMLTextAreaElement>(null)
+  const settingsRef = useRef<HTMLDivElement>(null)
   const hintSettings = story.hints ?? defaultHintSettings[story.difficulty]
   const hintItems = story.hints?.items ?? []
   const usedQuestionBudget =
@@ -554,6 +591,35 @@ function StoryPage({
   useEffect(() => {
     resizeQuestionInput()
   }, [question])
+
+  useEffect(() => {
+    saveGuideMessagePreference(showGuideMessage)
+  }, [showGuideMessage])
+
+  useEffect(() => {
+    if (!isSettingsOpen) {
+      return
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!settingsRef.current?.contains(event.target as Node)) {
+        setIsSettingsOpen(false)
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setIsSettingsOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isSettingsOpen])
 
   useEffect(() => {
     if (!truthDialogMode || truthDialogMode === 'limit') {
@@ -737,6 +803,25 @@ function StoryPage({
     await navigator.clipboard.writeText(window.location.href)
   }
 
+  function openRandomStory() {
+    const otherStories = stories.filter((candidate) => candidate.id !== story.id)
+    const candidateStories = otherStories.length > 0 ? otherStories : stories
+    const randomStory =
+      candidateStories[Math.floor(Math.random() * candidateStories.length)]
+
+    window.location.href = getStoryPath(randomStory.id)
+  }
+
+  function openNextStory() {
+    const currentIndex = stories.findIndex(
+      (candidate) => candidate.id === story.id,
+    )
+    const nextStory =
+      stories[currentIndex >= 0 ? (currentIndex + 1) % stories.length : 0]
+
+    window.location.href = getStoryPath(nextStory.id)
+  }
+
   return (
     <main className="app-shell story-layout">
       <nav className="story-nav" aria-label="页面导航">
@@ -753,11 +838,13 @@ function StoryPage({
       <section className="story-title">
         <div>
           <p className="eyebrow">当前汤题</p>
-          <h1>{story.title}</h1>
+          <div className="story-heading-line">
+            <h1>{story.title}</h1>
+            <span className={`difficulty ${story.difficulty}`}>
+              {difficultyText[story.difficulty]}
+            </span>
+          </div>
         </div>
-        <span className={`difficulty ${story.difficulty}`}>
-          {difficultyText[story.difficulty]}
-        </span>
       </section>
 
       <section className="surface-band">
@@ -773,33 +860,94 @@ function StoryPage({
             </div>
             {/* <p>先从关键线索入手，再逐步缩小范围。</p> */}
           </div>
-          <div className="mode-controls">
-            <ModelPicker
-              selectedModel={selectedModel}
-              onSelectedModelChange={onSelectedModelChange}
-            />
-            <label className="switch">
-              <input
-                checked={hintEnabled}
-                disabled={isLoading}
-                type="checkbox"
-                onChange={(event) => setHintEnabled(event.target.checked)}
-              />
-              <span>提示模式</span>
-            </label>
-            <label className="switch">
-              <input
-                checked={revealMode}
-                disabled={isLoading}
-                type="checkbox"
-                onChange={(event) => setRevealMode(event.target.checked)}
-              />
-              <span>揭晓模式</span>
-            </label>
+          <div className="settings-popover" ref={settingsRef}>
+            <button
+              aria-expanded={isSettingsOpen}
+              aria-haspopup="dialog"
+              className={
+                isSettingsOpen ? 'settings-button active' : 'settings-button'
+              }
+              type="button"
+              onClick={() => setIsSettingsOpen((current) => !current)}
+            >
+              <Settings size={18} />
+              设置
+            </button>
+            {isSettingsOpen ? (
+              <div
+                aria-label="问答设置"
+                className="settings-panel"
+                role="dialog"
+              >
+                <ModelPicker
+                  selectedModel={selectedModel}
+                  onSelectedModelChange={onSelectedModelChange}
+                />
+                <label className="switch">
+                  <input
+                    checked={hintEnabled}
+                    disabled={isLoading}
+                    type="checkbox"
+                    onChange={(event) => setHintEnabled(event.target.checked)}
+                  />
+                  <span>提示模式</span>
+                </label>
+                <label className="switch">
+                  <input
+                    checked={revealMode}
+                    disabled={isLoading}
+                    type="checkbox"
+                    onChange={(event) => setRevealMode(event.target.checked)}
+                  />
+                  <span>揭晓模式</span>
+                </label>
+                <label className="switch">
+                  <input
+                    checked={showGuideMessage}
+                    type="checkbox"
+                    onChange={(event) =>
+                      setShowGuideMessage(event.target.checked)
+                    }
+                  />
+                  <span>显示玩法说明</span>
+                </label>
+              </div>
+            ) : null}
           </div>
         </div>
 
         <div className="chat-list" aria-live="polite">
+          {showGuideMessage ? (
+            <article className="guide-message">
+              <div>
+                <span>玩法说明</span>
+                <div className="guide-message-copy">
+                  <p>
+                    右上角设置可切换
+                    模型和游玩模式
+                  </p>
+                  <p>
+                    <strong>提示模式：</strong>回答会附带
+                    方向提示
+                  </p>
+                  <p>
+                    <strong>揭晓模式：</strong>用于提交
+                    完整真相
+                  </p>
+                  <p>
+                    <strong>提示：</strong>可查看提示，消耗提问次数
+                  </p>
+                </div>
+              </div>
+              <button
+                aria-label="关闭玩法说明"
+                type="button"
+                onClick={() => setShowGuideMessage(false)}
+              >
+                <X size={16} />
+              </button>
+            </article>
+          ) : null}
           {entries.length === 0 ? (
             <div className="empty-chat">
               <Sparkles size={22} />
@@ -872,26 +1020,44 @@ function StoryPage({
 
       {showTruth ? <SourcePanel source={story.source} /> : null}
 
-      <button
-        className="reset-button"
-        type="button"
-        onClick={() => {
-          clearStoryProgress(story.id)
-          setEntries([])
-          setShowTruth(false)
-          setRevealedHintIndexes([])
-          setHasAcceptedLimitOverrun(false)
-          setTruthDialogMode(null)
-          setPendingHintIndex(null)
-          setIsHintTrayOpen(false)
-          setHintEnabled(false)
-          setRevealMode(false)
-          setError('')
-        }}
-      >
-        <RefreshCw size={18} />
-        重新开始当前题目
-      </button>
+      <div className="story-action-row">
+        <button
+          className="reset-button"
+          type="button"
+          onClick={() => {
+            clearStoryProgress(story.id)
+            setEntries([])
+            setShowTruth(false)
+            setRevealedHintIndexes([])
+            setHasAcceptedLimitOverrun(false)
+            setTruthDialogMode(null)
+            setPendingHintIndex(null)
+            setIsHintTrayOpen(false)
+            setHintEnabled(false)
+            setRevealMode(false)
+            setError('')
+          }}
+        >
+          <RefreshCw size={18} />
+          重新开始
+        </button>
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={openRandomStory}
+        >
+          <Shuffle size={18} />
+          随机一题
+        </button>
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={openNextStory}
+        >
+          <ArrowRight size={18} />
+          下一题
+        </button>
+      </div>
 
       <SiteFooter />
       {truthDialogMode ? (
@@ -1533,6 +1699,33 @@ function saveSelectedModel(model: AiModelId) {
     window.localStorage.setItem(MODEL_STORAGE_KEY, model)
   } catch {
     // The in-memory selection still applies for this session.
+  }
+}
+
+function loadGuideMessagePreference() {
+  if (typeof window === 'undefined') {
+    return true
+  }
+
+  try {
+    return window.localStorage.getItem(GUIDE_MESSAGE_STORAGE_KEY) !== 'hidden'
+  } catch {
+    return true
+  }
+}
+
+function saveGuideMessagePreference(isVisible: boolean) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(
+      GUIDE_MESSAGE_STORAGE_KEY,
+      isVisible ? 'visible' : 'hidden',
+    )
+  } catch {
+    // The in-memory preference still applies for this session.
   }
 }
 
