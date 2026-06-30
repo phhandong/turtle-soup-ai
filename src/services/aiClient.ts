@@ -39,9 +39,11 @@ async function askProxy(
   })
 
   if (!response.ok) {
+    const detail = await readErrorDetail(response)
     throw new AiProxyError(
       `AI API failed with ${response.status}`,
       response.status,
+      detail,
     )
   }
 
@@ -67,10 +69,19 @@ function normalizeAiResponse(
   return normalized
 }
 
+async function readErrorDetail(response: Response): Promise<string> {
+  try {
+    return (await response.text()).slice(0, 500)
+  } catch {
+    return ''
+  }
+}
+
 class AiProxyError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly detail: string,
   ) {
     super(message)
   }

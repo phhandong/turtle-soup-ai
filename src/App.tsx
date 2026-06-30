@@ -773,7 +773,8 @@ function StoryPage({
       ) {
         setTruthDialogMode('limit')
       }
-    } catch {
+    } catch (error) {
+      console.error('AI request failed', error)
       setError('暂时没有回应，请稍后再试。')
     } finally {
       setIsLoading(false)

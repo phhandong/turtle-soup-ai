@@ -61,6 +61,7 @@ async function proxyAiRequest(request, response, config) {
   }
 
   let upstream
+  const upstreamStartedAt = Date.now()
   try {
     upstream = await fetchWithTimeout(
       config.fetchImpl,
@@ -86,10 +87,22 @@ async function proxyAiRequest(request, response, config) {
     return
   }
 
+  const upstreamBody = await upstream.text()
+  if (!upstream.ok) {
+    console.error('FC request returned non-OK response', {
+      url: config.fcApiUrl,
+      status: upstream.status,
+      statusText: upstream.statusText,
+      durationMs: Date.now() - upstreamStartedAt,
+      serverTiming: upstream.headers.get('server-timing'),
+      body: upstreamBody.slice(0, 500),
+    })
+  }
+
   response.statusCode = upstream.status
   copyHeader(upstream.headers, response, 'content-type')
   copyHeader(upstream.headers, response, 'server-timing')
-  response.end(await upstream.text())
+  response.end(upstreamBody)
 }
 
 async function serveStatic(request, response, baseDir, pathname) {

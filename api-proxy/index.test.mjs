@@ -6,13 +6,13 @@ import { handler } from './index.mjs'
 const originalFetch = globalThis.fetch
 const originalEnv = {
   AGNES_API_KEY: process.env.AGNES_API_KEY,
-  ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
+  UNITY_API_KEY: process.env.UNITY_API_KEY,
 }
 
 test.afterEach(() => {
   globalThis.fetch = originalFetch
   restoreEnv('AGNES_API_KEY', originalEnv.AGNES_API_KEY)
-  restoreEnv('ALLOWED_ORIGINS', originalEnv.ALLOWED_ORIGINS)
+  restoreEnv('UNITY_API_KEY', originalEnv.UNITY_API_KEY)
 })
 
 test('returns a health response through the FC adapter', async () => {
@@ -23,7 +23,6 @@ test('returns a health response through the FC adapter', async () => {
 })
 
 test('allows preflight requests from any origin', async () => {
-  delete process.env.ALLOWED_ORIGINS
   const response = await handler(
     makeEvent({ method: 'OPTIONS', origin: 'https://anywhere.example' }),
   )
@@ -32,35 +31,6 @@ test('allows preflight requests from any origin', async () => {
   assert.equal(response.headers['access-control-allow-origin'], '*')
 })
 
-test('allows configured origins', async () => {
-  process.env.ALLOWED_ORIGINS =
-    'https://turtle.handong-joy.xyz, http://127.0.0.1:4173'
-
-  const response = await handler(
-    makeEvent({ method: 'OPTIONS', origin: 'https://turtle.handong-joy.xyz' }),
-  )
-
-  assert.equal(response.statusCode, 204)
-  assert.equal(
-    response.headers['access-control-allow-origin'],
-    'https://turtle.handong-joy.xyz',
-  )
-})
-
-test('rejects unconfigured origins', async () => {
-  process.env.ALLOWED_ORIGINS = 'https://turtle.handong-joy.xyz'
-
-  const response = await handler(
-    makeEvent({ method: 'OPTIONS', origin: 'https://blocked.example' }),
-  )
-
-  assert.equal(response.statusCode, 403)
-  assert.equal(
-    response.headers['access-control-allow-origin'],
-    'null',
-  )
-  assert.deepEqual(JSON.parse(response.body), { error: 'Origin not allowed' })
-})
 
 test('proxies a request with the server-side API key', async () => {
   process.env.AGNES_API_KEY = 'server-only-test-key'
@@ -98,6 +68,34 @@ test('proxies a request with the server-side API key', async () => {
   assert.deepEqual(JSON.parse(response.body), { answer: '是', label: 'yes' })
 })
 
+test('does not switch models when the selected provider is unavailable', async () => {
+  delete process.env.UNITY_API_KEY
+  let fetchCalled = false
+  globalThis.fetch = async () => {
+    fetchCalled = true
+    throw new Error('fetch should not be called without selected provider key')
+  }
+
+  const response = await handler(
+    makeEvent({
+      method: 'POST',
+      origin: 'https://turtle.handong-joy.xyz',
+      body: {
+        storyId: 'test-story',
+        surface: '汤面',
+        truth: '汤底',
+        question: '问题',
+        hintEnabled: false,
+        revealMode: false,
+        model: 'claude-opus-4-8',
+      },
+    }),
+  )
+
+  assert.equal(response.statusCode, 502)
+  assert.equal(fetchCalled, false)
+  assert.deepEqual(JSON.parse(response.body), { error: 'AI upstream request failed' })
+})
 function makeEvent({ method, path = '/', origin, body }) {
   return JSON.stringify({
     version: 'v1',

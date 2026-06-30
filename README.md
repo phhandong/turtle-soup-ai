@@ -82,7 +82,6 @@ s config add
 $env:AGNES_API_KEY = Read-Host 'AGNES_API_KEY'
 $env:UNITY_API_KEY = Read-Host 'UNITY_API_KEY'
 $env:DEEPSEEK_API_KEY = Read-Host 'DEEPSEEK_API_KEY'
-$env:ALLOWED_ORIGINS = ""
 ```
 
 3. 部署并获取 HTTP 触发器测试地址：
@@ -92,7 +91,7 @@ cd api-proxy
 s deploy -y
 ```
 
-函数使用 Node.js 20、320 MB 内存、0.35 vCPU、60 秒超时。CORS 在未配置 `ALLOWED_ORIGINS` 时返回 `Access-Control-Allow-Origin: *`，方便测试；正式域控时把 `ALLOWED_ORIGINS` 设置为逗号分隔的允许来源，例如 `https://turtle.handong-joy.xyz,http://127.0.0.1:4173`。首次部署后可请求 `/health`，预期返回 `{"ok":true}`。
+函数使用 Node.js 20、320 MB 内存、0.35 vCPU、60 秒超时。CORS 固定返回 `Access-Control-Allow-Origin: *`。首次部署后可请求 `/health`，预期返回 `{"ok":true}`。
 
 ### 绑定正式域名
 
