@@ -1846,8 +1846,24 @@ code {
   }
 
   .hint-chip {
+    flex-direction: column;
     min-height: 38px;
-    padding: 6px 8px;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 6px 8px 7px;
+    text-align: center;
+  }
+
+  .hint-chip span {
+    justify-content: center;
+    width: 100%;
+    font-size: 0.74rem;
+  }
+
+  .hint-chip strong {
+    margin: 5px 0 0;
+    font-size: 0.86rem;
+    line-height: 1.16;
   }
 
   .model-select {
