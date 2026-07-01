@@ -14,7 +14,8 @@
     "check:api": "node --check api-proxy/index.mjs && node --check api-proxy/proxy-core.mjs && node --check server/index.mjs",
     "preview": "vite preview --configLoader native",
     "deploy": "npm run build -- --base=/turtle-soup-ai/ && gh-pages -d dist",
-    "start": "node server/index.mjs"
+    "start": "node server/index.mjs",
+    "start:server": "node server/start-server.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.544.0",
