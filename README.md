@@ -117,8 +117,13 @@ npm run build
 
 ## 赞助者
 
-感谢 [MengAnXiang](https://github.com/MengAnXiang) 对本网站的赞助。
+感谢 [MengAnXiang](https://github.com/MengAnXiang) 和 [Wan-LR](https://github.com/Wan-LR) 对本网站的赞助。
 
 <a href="https://github.com/MengAnXiang">
   <img src="https://github.com/MengAnXiang.png?size=128" width="64" height="64" alt="MengAnXiang 的 GitHub 头像">
 </a>
+<a href="https://github.com/Wan-LR">
+  <img src="https://github.com/Wan-LR.png?size=128" width="64" height="64" alt="Wan-LR 的 GitHub 头像">
+</a>
+
+

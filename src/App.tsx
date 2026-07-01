@@ -2284,6 +2284,18 @@ function SiteFooter() {
           />
           <span>MengAnXiang</span>
         </a>
+        <a
+          className="footer-sponsor"
+          href="https://github.com/Wan-LR"
+          rel="noreferrer"
+          target="_blank"
+        >
+          <img
+            src="https://github.com/Wan-LR.png?size=96"
+            alt="Wan-LR 的 GitHub 头像"
+          />
+          <span>Wan-LR</span>
+        </a>
       </div>
     </footer>
   )
