@@ -3,10 +3,13 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const DEFAULT_FC_API_URL = 'https://api-turtle.handong-joy.xyz'
+const DEFAULT_FC_API_URL = 'https://turtle-ai-proxy-opzmtticwv.cn-wulanchabu.fcapp.run'
 const DEFAULT_PORT = 4173
 const DEFAULT_TIMEOUT_MS = 60000
+const DEFAULT_FC_MAX_ATTEMPTS = 2
+const DEFAULT_FC_RETRY_DELAY_MS = 700
 const MAX_BODY_BYTES = 256 * 1024
+const RETRYABLE_UPSTREAM_STATUSES = new Set([502, 503, 504])
 
 const rootDir = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const distDir = resolve(rootDir, 'dist')
@@ -19,6 +22,14 @@ export function createApp(options = {}) {
     distDir: resolve(options.distDir || distDir),
     fcApiUrl: trimTrailingSlash(options.fcApiUrl || fcApiUrl),
     timeoutMs: getPositiveNumber(options.timeoutMs, timeoutMs),
+    fcMaxAttempts: getPositiveInteger(
+      options.fcMaxAttempts || process.env.FC_MAX_ATTEMPTS,
+      DEFAULT_FC_MAX_ATTEMPTS,
+    ),
+    fcRetryDelayMs: getPositiveNumber(
+      options.fcRetryDelayMs || process.env.FC_RETRY_DELAY_MS,
+      DEFAULT_FC_RETRY_DELAY_MS,
+    ),
     fetchImpl: options.fetchImpl || fetch,
   }
 
@@ -60,25 +71,9 @@ async function proxyAiRequest(request, response, config) {
     return
   }
 
-  let upstream
-  const upstreamStartedAt = Date.now()
+  let upstreamResult
   try {
-    upstream = await fetchWithTimeout(
-      config.fetchImpl,
-      config.fcApiUrl,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': request.headers['content-type'] || 'application/json',
-          ...(request.headers.origin ? { Origin: request.headers.origin } : {}),
-          ...(request.headers['x-debug-timing']
-            ? { 'X-Debug-Timing': request.headers['x-debug-timing'] }
-            : {}),
-        },
-        body,
-      },
-      config.timeoutMs,
-    )
+    upstreamResult = await fetchFcWithRetry(config, request, body)
   } catch (error) {
     sendJson(response, 502, {
       error: 'FC request failed',
@@ -87,15 +82,16 @@ async function proxyAiRequest(request, response, config) {
     return
   }
 
-  const upstreamBody = await upstream.text()
+  const { upstream, upstreamBody, attempts } = upstreamResult
   if (!upstream.ok) {
     console.error('FC request returned non-OK response', {
       url: config.fcApiUrl,
       status: upstream.status,
       statusText: upstream.statusText,
-      durationMs: Date.now() - upstreamStartedAt,
+      durationMs: attempts.reduce((total, attempt) => total + attempt.durationMs, 0),
       serverTiming: upstream.headers.get('server-timing'),
       body: upstreamBody.slice(0, 500),
+      attempts,
     })
   }
 
@@ -103,6 +99,79 @@ async function proxyAiRequest(request, response, config) {
   copyHeader(upstream.headers, response, 'content-type')
   copyHeader(upstream.headers, response, 'server-timing')
   response.end(upstreamBody)
+}
+
+async function fetchFcWithRetry(config, request, body) {
+  const attempts = []
+  const init = {
+    method: 'POST',
+    headers: {
+      'Content-Type': request.headers['content-type'] || 'application/json',
+      ...(request.headers.origin ? { Origin: request.headers.origin } : {}),
+      ...(request.headers['x-debug-timing']
+        ? { 'X-Debug-Timing': request.headers['x-debug-timing'] }
+        : {}),
+    },
+    body,
+  }
+
+  let lastError
+  for (let attempt = 1; attempt <= config.fcMaxAttempts; attempt += 1) {
+    const startedAt = Date.now()
+
+    try {
+      const upstream = await fetchWithTimeout(
+        config.fetchImpl,
+        config.fcApiUrl,
+        init,
+        config.timeoutMs,
+      )
+      const upstreamBody = await upstream.text()
+      const attemptMeta = {
+        attempt,
+        status: upstream.status,
+        statusText: upstream.statusText,
+        durationMs: Date.now() - startedAt,
+        serverTiming: upstream.headers.get('server-timing'),
+      }
+      attempts.push(attemptMeta)
+
+      if (
+        upstream.ok ||
+        !RETRYABLE_UPSTREAM_STATUSES.has(upstream.status) ||
+        attempt >= config.fcMaxAttempts
+      ) {
+        return { upstream, upstreamBody, attempts }
+      }
+
+      console.warn('Retrying FC request after retryable response', {
+        url: config.fcApiUrl,
+        ...attemptMeta,
+        body: upstreamBody.slice(0, 500),
+      })
+    } catch (error) {
+      lastError = error
+      const attemptMeta = {
+        attempt,
+        error: getErrorMessage(error),
+        durationMs: Date.now() - startedAt,
+      }
+      attempts.push(attemptMeta)
+
+      if (attempt >= config.fcMaxAttempts) {
+        throw error
+      }
+
+      console.warn('Retrying FC request after request failure', {
+        url: config.fcApiUrl,
+        ...attemptMeta,
+      })
+    }
+
+    await delay(config.fcRetryDelayMs)
+  }
+
+  throw lastError || new Error('FC request failed')
 }
 
 async function serveStatic(request, response, baseDir, pathname) {
@@ -185,6 +254,10 @@ async function fetchWithTimeout(fetchImpl, url, init, timeoutMs) {
   }
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 function sendJson(response, status, body) {
   response.statusCode = status
   response.setHeader('Content-Type', 'application/json; charset=utf-8')
@@ -217,6 +290,11 @@ function getContentType(filePath) {
 function getPositiveNumber(value, fallback) {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function getPositiveInteger(value, fallback) {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
 }
 
 function trimTrailingSlash(value) {

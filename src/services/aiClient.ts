@@ -1,6 +1,9 @@
 import type { AiAnswerText, AiRequest, AiResponse } from '../types/story'
 
 const defaultApiUrl = '/api/ai'
+const retryableStatuses = new Set([502, 503, 504])
+const maxAttempts = 2
+const retryDelayMs = 600
 const validAnswers = new Set<AiAnswerText>([
   '是',
   '不是',
@@ -30,13 +33,34 @@ async function askProxy(
   apiUrl: string,
   request: AiRequest,
 ): Promise<AiResponse> {
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(request),
-  })
+  const body = JSON.stringify(request)
+  let response: Response
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body,
+      })
+    } catch (error) {
+      if (attempt >= maxAttempts) {
+        throw error
+      }
+
+      await delay(retryDelayMs)
+      continue
+    }
+
+    if (!retryableStatuses.has(response.status) || attempt >= maxAttempts) {
+      break
+    }
+
+    await drainResponse(response)
+    await delay(retryDelayMs)
+  }
 
   if (!response.ok) {
     const detail = await readErrorDetail(response)
@@ -49,6 +73,18 @@ async function askProxy(
 
   const data = (await response.json()) as Partial<AiResponse>
   return normalizeAiResponse(data, request.hintEnabled)
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+async function drainResponse(response: Response): Promise<void> {
+  try {
+    await response.text()
+  } catch {
+    // Ignore retry body read failures.
+  }
 }
 
 function normalizeAiResponse(

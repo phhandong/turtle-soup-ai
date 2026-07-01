@@ -6,6 +6,8 @@ import test from 'node:test'
 
 import { createApp } from './index.mjs'
 
+const fcApiUrl = 'https://turtle-ai-proxy-opzmtticwv.cn-wulanchabu.fcapp.run'
+
 test('serves built static files', async (t) => {
   const distDir = await makeDist()
   t.after(() => rm(distDir, { recursive: true, force: true }))
@@ -30,7 +32,7 @@ test('proxies /api/ai to the configured FC URL', async (t) => {
   const server = await listen(
     createApp({
       distDir,
-      fcApiUrl: 'https://api-turtle.handong-joy.xyz',
+      fcApiUrl,
       fetchImpl: async (url, init) => {
         requestedUrl = url
         requestedBody = JSON.parse(init.body.toString('utf8'))
@@ -58,10 +60,54 @@ test('proxies /api/ai to the configured FC URL', async (t) => {
   })
 
   assert.equal(response.status, 200)
-  assert.equal(requestedUrl, 'https://api-turtle.handong-joy.xyz')
+  assert.equal(requestedUrl, fcApiUrl)
   assert.deepEqual(requestedBody, { storyId: 'story-1', question: 'Q?' })
   assert.equal(requestedOrigin, 'http://127.0.0.1:4173')
   assert.equal(response.headers.get('server-timing'), 'total;dur=12')
+  assert.deepEqual(await response.json(), { answer: 'yes', label: 'yes' })
+})
+
+test('retries retryable FC responses', async (t) => {
+  const distDir = await makeDist()
+  t.after(() => rm(distDir, { recursive: true, force: true }))
+
+  let requestCount = 0
+  const server = await listen(
+    createApp({
+      distDir,
+      fcApiUrl,
+      fcRetryDelayMs: 1,
+      fetchImpl: async () => {
+        requestCount += 1
+
+        if (requestCount === 1) {
+          return new Response(JSON.stringify({ error: 'temporary' }), {
+            status: 502,
+            headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          })
+        }
+
+        return new Response(JSON.stringify({ answer: 'yes', label: 'yes' }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Server-Timing': 'total;dur=10',
+          },
+        })
+      },
+    }),
+  )
+  t.after(async () => close(server))
+
+  const response = await fetch(`${server.url}/api/ai`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ storyId: 'story-1', question: 'Q?' }),
+  })
+
+  assert.equal(response.status, 200)
+  assert.equal(requestCount, 2)
+  assert.equal(response.headers.get('server-timing'), 'total;dur=10')
   assert.deepEqual(await response.json(), { answer: 'yes', label: 'yes' })
 })
 
