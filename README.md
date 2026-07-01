@@ -43,9 +43,29 @@ npm run dev:stop
 npm run build
 ```
 
+## 云服务器 Node 转发服务
+
+生产链路为：浏览器请求当前站点同域 `/api/ai`，Node 服务再转发到阿里云函数计算 `https://api-turtle.handong-joy.xyz`。
+
+```bash
+npm run build
+npm start
+```
+
+默认监听 `4173` 端口，可通过环境变量调整：
+
+```powershell
+$env:PORT = "4173"
+$env:FC_API_URL = "https://api-turtle.handong-joy.xyz"
+$env:FC_TIMEOUT_MS = "30000"
+npm start
+```
+
+本地完整链路测试也使用这个服务；打开 `http://127.0.0.1:4173` 后，浏览器 Network 中 AI 请求应只出现同域 `/api/ai`。
+
 ## 阿里云函数计算 API 代理
 
-浏览器只请求阿里云函数；模型 API key 只从函数计算环境变量读取，不再打包进前端。函数入口位于 `api-proxy/index.mjs`，业务逻辑位于 `api-proxy/proxy-core.mjs`。
+浏览器默认不再直接请求阿里云函数，而是请求 Node 转发服务的 `/api/ai`；Node 再请求函数计算。模型 API key 只从函数计算环境变量读取，不打包进前端。函数入口位于 `api-proxy/index.mjs`，业务逻辑位于 `api-proxy/proxy-core.mjs`。
 
 ### 部署函数
 
@@ -71,7 +91,7 @@ cd api-proxy
 s deploy -y
 ```
 
-函数使用 Node.js 20、512 MB 内存、0.35 vCPU、30 秒超时。CORS 默认返回 `Access-Control-Allow-Origin: *`，首次部署后可请求 `/health`，预期返回 `{"ok":true}`。
+函数使用 Node.js 20、320 MB 内存、0.35 vCPU、60 秒超时。CORS 固定返回 `Access-Control-Allow-Origin: *`。首次部署后可请求 `/health`，预期返回 `{"ok":true}`。
 
 ### 绑定正式域名
 
@@ -80,7 +100,7 @@ s deploy -y
 1. 添加已接入阿里云备案的自定义域名 `api-turtle.handong-joy.xyz`。
 2. 把路由 `/*` 指向 `turtle-soup-ai-proxy` 的 `LATEST` 版本。
 3. 按控制台提示添加 CNAME，并启用 HTTPS 证书。
-4. 在 GitHub 仓库的 Actions Variables 中设置 `VITE_AI_API_URL=https://api-turtle.handong-joy.xyz`，再重新运行 Pages 部署。
+4. 云服务器版本不需要把函数域名暴露给前端；如 GitHub Pages 单独分支需要直连函数，再在 Actions Variables 中设置 `VITE_AI_API_URL=https://api-turtle.handong-joy.xyz`。
 
 `turtle.handong-joy.xyz` 继续用于 GitHub Pages，`api-turtle.handong-joy.xyz` 专用于函数计算，避免同一 DNS 记录冲突。
 
@@ -89,6 +109,7 @@ s deploy -y
 ```powershell
 npm run check:api
 npm run test:api
+npm run test:server
 npm run build
 ```
 
@@ -96,8 +117,12 @@ npm run build
 
 ## 赞助者
 
-感谢 [MengAnXiang](https://github.com/MengAnXiang) 对本网站的赞助。
+感谢 [MengAnXiang](https://github.com/MengAnXiang) 和 [Wan-LR](https://github.com/Wan-LR) 对本网站的赞助。
 
 <a href="https://github.com/MengAnXiang">
   <img src="https://github.com/MengAnXiang.png?size=128" width="64" height="64" alt="MengAnXiang 的 GitHub 头像">
 </a>
+<a href="https://github.com/Wan-LR">
+  <img src="https://github.com/Wan-LR.png?size=128" width="64" height="64" alt="Wan-LR 的 GitHub 头像">
+</a>
+
