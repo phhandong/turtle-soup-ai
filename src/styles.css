@@ -1473,6 +1473,13 @@ code {
   transform: rotate(8deg) scale(1.04);
 }
 
+.hint-unlock-guide {
+  border-color: rgba(201, 133, 30, 0.34);
+  background:
+    linear-gradient(135deg, rgba(255, 244, 214, 0.94), rgba(255, 253, 247, 0.94)),
+    var(--paper);
+}
+
 .chat-entry {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(168px, 0.65fr);
@@ -1673,7 +1680,7 @@ code {
   scrollbar-width: thin;
 }
 
-.hint-tray-toggle[aria-expanded='true'] + .hint-strip {
+.hint-tray-toggle[aria-expanded='true'] ~ .hint-strip {
   display: grid;
   animation: trayUnfold 230ms var(--ease-out) backwards;
   transform-origin: top left;
@@ -1746,14 +1753,31 @@ code {
   padding-top: 4px;
 }
 
+.ask-input-shell {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid rgba(23, 32, 29, 0.2);
+  border-radius: 8px;
+  background: #fffefa;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms var(--ease-out);
+}
+
+.ask-input-shell:focus-within {
+  border-color: var(--moss);
+  box-shadow: 0 0 0 3px rgba(47, 111, 98, 0.12);
+  transform: translateY(-1px);
+}
+
 .ask-form textarea {
   width: 100%;
   min-height: 50px;
   max-height: 150px;
-  border: 1px solid rgba(23, 32, 29, 0.2);
-  border-radius: 8px;
-  padding: 13px 14px;
-  background: #fffefa;
+  border: 0;
+  padding: 13px 14px 8px;
+  background: transparent;
   line-height: 1.45;
   outline: none;
   overflow-y: hidden;
@@ -1765,9 +1789,43 @@ code {
 }
 
 .ask-form textarea:focus {
-  border-color: var(--moss);
-  box-shadow: 0 0 0 3px rgba(47, 111, 98, 0.12);
-  transform: translateY(-1px);
+  box-shadow: none;
+}
+
+.unlock-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px 8px 14px;
+  color: var(--moss-dark);
+  font-size: 0.76rem;
+  font-weight: 950;
+  font-variant-numeric: tabular-nums;
+}
+
+.unlock-progress-track {
+  position: relative;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(23, 32, 29, 0.1);
+}
+
+.unlock-progress-track::before {
+  position: absolute;
+  inset: 0;
+  width: var(--unlock-progress, 0%);
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--gold), var(--moss));
+  content: '';
+  transition: width 320ms var(--ease-out);
+}
+
+.unlock-progress strong {
+  line-height: 1;
+  min-width: 4ch;
+  text-align: right;
 }
 
 .ask-form button {
@@ -2518,6 +2576,10 @@ code {
 
   .hint-meter {
     min-width: 136px;
+  }
+
+  .hint-tray-toggle {
+    min-width: 0;
   }
 
   .hint-strip {

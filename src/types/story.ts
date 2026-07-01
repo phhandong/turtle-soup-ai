@@ -42,6 +42,10 @@ export type AiRequest = {
   surface: string;
   truth: string;
   question: string;
+  hintCandidates?: Array<{
+    index: number;
+    text: string;
+  }>;
   hintEnabled: boolean;
   revealMode: boolean;
   model: AiModelId;
@@ -52,6 +56,7 @@ export type AiResponse = {
   answer: AiAnswerText;
   label: AnswerLabel;
   hint?: string;
+  matchedHintIndexes?: number[];
 };
 
 export type ChatEntry = {

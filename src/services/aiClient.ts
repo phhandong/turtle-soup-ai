@@ -66,7 +66,27 @@ function normalizeAiResponse(
     normalized.hint = data.hint
   }
 
+  normalized.matchedHintIndexes = normalizeHintIndexes(data.matchedHintIndexes)
+
   return normalized
+}
+
+function normalizeHintIndexes(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return Array.from(
+    new Set(
+      value.filter(
+        (index): index is number =>
+          typeof index === 'number' &&
+          Number.isInteger(index) &&
+          index >= 0 &&
+          index < 3,
+      ),
+    ),
+  ).sort((left, right) => left - right)
 }
 
 async function readErrorDetail(response: Response): Promise<string> {

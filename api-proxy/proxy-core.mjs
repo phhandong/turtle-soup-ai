@@ -86,7 +86,12 @@ export default {
     const content = data?.choices?.[0]?.message?.content ?? ''
 
     const parseStartedAt = performance.now()
-    const parsed = parseModelOutput(content, payload.hintEnabled)
+    const parsed = parseModelOutput(
+      content,
+      payload.hintEnabled,
+      normalizeHintCandidates(payload.hintCandidates),
+      payload.question,
+    )
     timings.add('parse_model_output', parseStartedAt)
 
     return respond(parsed, 200, {
@@ -284,6 +289,11 @@ function validatePayload(payload) {
     return 'Missing question'
   if (payload.question.length > 160) return 'Question is too long'
   if (
+    payload.hintCandidates !== undefined &&
+    !isValidHintCandidates(payload.hintCandidates)
+  )
+    return 'Invalid hintCandidates'
+  if (
     payload.revealMode !== undefined &&
     typeof payload.revealMode !== 'boolean'
   )
@@ -295,6 +305,46 @@ function validatePayload(payload) {
     return 'Invalid model'
   }
   return ''
+}
+
+function isValidHintCandidates(value) {
+  return (
+    Array.isArray(value) &&
+    value.length <= 3 &&
+    value.every(
+      (candidate) =>
+        candidate &&
+        typeof candidate === 'object' &&
+        Number.isInteger(candidate.index) &&
+        candidate.index >= 0 &&
+        candidate.index < 3 &&
+        typeof candidate.text === 'string' &&
+        candidate.text.length > 0 &&
+        candidate.text.length <= 120,
+    )
+  )
+}
+
+function normalizeHintCandidates(value) {
+  if (!isValidHintCandidates(value)) {
+    return []
+  }
+
+  const seen = new Set()
+  return value
+    .filter((candidate) => {
+      if (seen.has(candidate.index)) {
+        return false
+      }
+
+      seen.add(candidate.index)
+      return true
+    })
+    .map((candidate) => ({
+      index: candidate.index,
+      text: candidate.text.trim(),
+    }))
+    .filter((candidate) => candidate.text)
 }
 
 function getRequestedModel(payload) {
@@ -316,6 +366,13 @@ function isDeepSeekModel(model) {
 }
 
 function buildPrompt(payload) {
+  const hintCandidates = normalizeHintCandidates(payload.hintCandidates)
+  const hintCandidateText =
+    hintCandidates.length > 0
+      ? hintCandidates
+          .map((candidate) => `${candidate.index}: ${candidate.text}`)
+          .join('\n')
+      : 'none'
   const answerOptions = payload.revealMode
     ? '是|不是|是也不是|无关|还原正确'
     : '是|不是|是也不是|无关'
@@ -355,27 +412,32 @@ function buildPrompt(payload) {
     payload.hintEnabled
       ? '当前已开启提示模式，可以额外给一句非常短的 hint，但不要剧透关键反转。'
       : '当前未开启提示模式，不要输出 hint。',
+    '同时比较用户消息和 hintCandidates。只有当用户消息与候选提示中的关键词、关键物品、关键动作或关键因果高度相关时，才把该候选 index 放入 matchedHintIndexes。',
+    '不要因为用户问题泛泛接近汤底、只表达宽泛方向、只碰到故事常见背景，就判定提示匹配；没有明确关键词重合或强语义对应时返回空数组。',
+    'matchedHintIndexes 只能包含 hintCandidates 中出现的 index。',
     '必须输出严格 JSON，不要输出 Markdown。',
     payload.hintEnabled
-      ? `JSON 格式：{"answer":"${answerOptions}","hint":"一句非常短的提示"}`
-      : `JSON 格式：{"answer":"${answerOptions}"}`,
+      ? `JSON 格式：{"answer":"${answerOptions}","hint":"一句非常短的提示","matchedHintIndexes":[0]}`
+      : `JSON 格式：{"answer":"${answerOptions}","matchedHintIndexes":[0]}`,
   ].join('\n')
 
   const user = [
     `汤面：${payload.surface}`,
     `汤底：${payload.truth}`,
     `${payload.revealMode ? '用户还原' : '问题'}：${payload.question}`,
+    `hintCandidates:\n${hintCandidateText}`,
   ].join('\n\n')
 
   return {
     system,
     user,
-    maxTokens: payload.hintEnabled ? 80 : 24,
+    maxTokens: payload.hintEnabled ? 120 : 64,
   }
 }
 
-function parseModelOutput(content, hintEnabled) {
+function parseModelOutput(content, hintEnabled, hintCandidates = [], question = '') {
   const fallbackAnswer = extractAnswer(content)
+  const validHintIndexes = new Set(hintCandidates.map((candidate) => candidate.index))
 
   try {
     const parsed = JSON.parse(content)
@@ -383,6 +445,12 @@ function parseModelOutput(content, hintEnabled) {
     const response = {
       answer,
       label: answerMap[answer],
+      matchedHintIndexes: normalizeMatchedHintIndexes(
+        parsed.matchedHintIndexes,
+        validHintIndexes,
+        hintCandidates,
+        question,
+      ),
     }
 
     if (hintEnabled && typeof parsed.hint === 'string' && parsed.hint.trim()) {
@@ -395,8 +463,101 @@ function parseModelOutput(content, hintEnabled) {
     return {
       answer,
       label: answerMap[answer],
+      matchedHintIndexes: [],
     }
   }
+}
+
+function normalizeMatchedHintIndexes(
+  value,
+  validHintIndexes,
+  hintCandidates,
+  question,
+) {
+  if (!Array.isArray(value) || validHintIndexes.size === 0) {
+    return []
+  }
+
+  const candidateByIndex = new Map(
+    hintCandidates.map((candidate) => [candidate.index, candidate]),
+  )
+
+  return Array.from(
+    new Set(
+      value.filter(
+        (index) => {
+          if (!Number.isInteger(index) || !validHintIndexes.has(index)) {
+            return false
+          }
+
+          const candidate = candidateByIndex.get(index)
+          return !!candidate && isKeywordRelevant(question, candidate.text)
+        },
+      ),
+    ),
+  ).sort((left, right) => left - right)
+}
+
+function isKeywordRelevant(question, hintText) {
+  const questionTokens = getKeywordTokens(question)
+  const hintTokens = getKeywordTokens(hintText)
+
+  if (questionTokens.size === 0 || hintTokens.size === 0) {
+    return false
+  }
+
+  let overlapCount = 0
+  for (const token of hintTokens) {
+    if (questionTokens.has(token)) {
+      overlapCount += 1
+    }
+  }
+
+  const overlapRatio = overlapCount / hintTokens.size
+  if (overlapCount >= 1 && overlapRatio >= 0.25) {
+    return true
+  }
+
+  for (const hintToken of hintTokens) {
+    if (hintToken.length < 2) {
+      continue
+    }
+
+    for (const questionToken of questionTokens) {
+      if (
+        questionToken.length >= 2 &&
+        (questionToken.includes(hintToken) || hintToken.includes(questionToken))
+      ) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+function getKeywordTokens(value) {
+  const normalized = String(value || '')
+    .toLowerCase()
+    .replace(/[，。！？、；：“”‘’（）()[\]{}<>《》.,!?;:'"`~@#$%^&*_+=|\\/\\-]/g, ' ')
+  const tokens = new Set()
+
+  for (const token of normalized.match(/[a-z0-9]+/g) || []) {
+    if (token.length >= 3) {
+      tokens.add(token)
+    }
+  }
+
+  for (const token of normalized.match(/[\u4e00-\u9fff]{2,}/g) || []) {
+    tokens.add(token)
+    for (let size = 2; size <= Math.min(4, token.length); size += 1) {
+      for (let index = 0; index <= token.length - size; index += 1) {
+        tokens.add(token.slice(index, index + size))
+      }
+    }
+  }
+
+  return tokens
 }
 
 function extractAnswer(content) {

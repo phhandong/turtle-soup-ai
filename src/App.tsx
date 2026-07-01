@@ -461,6 +461,37 @@ function isSubsequence(needle: string, haystack: string) {
   return needle.length === 0
 }
 
+function mergeHintIndexes(
+  currentIndexes: number[],
+  nextIndexes: number[],
+  hintCount = 3,
+) {
+  return Array.from(
+    new Set(
+      [...currentIndexes, ...nextIndexes].filter(
+        (index) =>
+          Number.isInteger(index) && index >= 0 && index < hintCount,
+      ),
+    ),
+  ).sort((left, right) => left - right)
+}
+
+function getUnlockProgressPercent(
+  revealedCount: number,
+  hintCount: number,
+  showTruth: boolean,
+) {
+  if (showTruth) {
+    return 100
+  }
+
+  if (hintCount <= 0) {
+    return 0
+  }
+
+  return Math.min(99, revealedCount * 33)
+}
+
 function getVisiblePageItems(
   currentPage: number,
   pageCount: number,
@@ -565,20 +596,28 @@ function StoryPage({
   selectedModel: AiModelId
   onSelectedModelChange: (model: AiModelId) => void
 }) {
+  const initialProgress = useMemo(() => loadStoryProgress(story.id), [story.id])
   const [question, setQuestion] = useState('')
   const [entries, setEntries] = useState<ChatEntry[]>(
-    () => loadStoryProgress(story.id).entries,
+    () => initialProgress.entries,
   )
   const [hintEnabled, setHintEnabled] = useState(false)
   const [revealedHintIndexes, setRevealedHintIndexes] = useState<number[]>(
-    () => loadStoryProgress(story.id).revealedHintIndexes,
+    () => initialProgress.revealedHintIndexes,
   )
+  const [chargedHintIndexes, setChargedHintIndexes] = useState<number[]>(
+    () => initialProgress.chargedHintIndexes,
+  )
+  const [hasSeenHintUnlockGuide, setHasSeenHintUnlockGuide] = useState(
+    () => initialProgress.hasSeenHintUnlockGuide,
+  )
+  const [showHintUnlockGuide, setShowHintUnlockGuide] = useState(false)
   const [hasAcceptedLimitOverrun, setHasAcceptedLimitOverrun] = useState(
-    () => loadStoryProgress(story.id).hasAcceptedLimitOverrun,
+    () => initialProgress.hasAcceptedLimitOverrun,
   )
   const [revealMode, setRevealMode] = useState(false)
   const [showTruth, setShowTruth] = useState(
-    () => loadStoryProgress(story.id).showTruth,
+    () => initialProgress.showTruth,
   )
   const [truthDialogMode, setTruthDialogMode] =
     useState<TruthDialogMode | null>(null)
@@ -596,21 +635,29 @@ function StoryPage({
   const hintSettings = story.hints ?? defaultHintSettings[story.difficulty]
   const hintItems = story.hints?.items ?? []
   const usedQuestionBudget =
-    entries.length + revealedHintIndexes.length * hintSettings.hintCost
+    entries.length + chargedHintIndexes.length * hintSettings.hintCost
   const isQuestionBudgetExhausted =
-    usedQuestionBudget >= hintSettings.questionLimit ||
-    (hintItems.length > 0 && revealedHintIndexes.length >= hintItems.length)
+    usedQuestionBudget >= hintSettings.questionLimit
+  const unlockProgressPercent = getUnlockProgressPercent(
+    revealedHintIndexes.length,
+    hintItems.length,
+    showTruth,
+  )
 
   useEffect(() => {
     saveStoryProgress(story.id, {
+      chargedHintIndexes,
       entries,
       hasAcceptedLimitOverrun,
+      hasSeenHintUnlockGuide,
       revealedHintIndexes,
       showTruth,
     })
   }, [
+    chargedHintIndexes,
     entries,
     hasAcceptedLimitOverrun,
+    hasSeenHintUnlockGuide,
     revealedHintIndexes,
     showTruth,
     story.id,
@@ -692,21 +739,26 @@ function StoryPage({
       return
     }
 
-    const nextRevealedHintIndexes = [
-      ...revealedHintIndexes,
-      pendingHintIndex,
-    ].sort(
-      (left, right) => left - right,
+    const nextRevealedHintIndexes = mergeHintIndexes(
+      revealedHintIndexes,
+      [pendingHintIndex],
+      hintItems.length,
+    )
+    const nextChargedHintIndexes = mergeHintIndexes(
+      chargedHintIndexes,
+      [pendingHintIndex],
+      hintItems.length,
     )
 
     setRevealedHintIndexes(nextRevealedHintIndexes)
+    setChargedHintIndexes(nextChargedHintIndexes)
+    maybeShowHintUnlockGuide(nextRevealedHintIndexes.length)
     setPendingHintIndex(null)
 
     if (
       !hasAcceptedLimitOverrun &&
-      (entries.length + nextRevealedHintIndexes.length * hintSettings.hintCost >=
-        hintSettings.questionLimit ||
-        nextRevealedHintIndexes.length >= hintItems.length)
+      entries.length + nextChargedHintIndexes.length * hintSettings.hintCost >=
+        hintSettings.questionLimit
     ) {
       setTruthDialogMode('limit')
       return
@@ -772,11 +824,15 @@ function StoryPage({
     playUiSound('send', soundEnabled)
 
     try {
+      const hintCandidates = hintItems
+        .map((text, index) => ({ index, text }))
+        .filter(({ index }) => !revealedHintIndexes.includes(index))
       const answer = await askAi({
         storyId: story.id,
         surface: story.surface,
         truth: story.truth,
         question: trimmedQuestion,
+        hintCandidates,
         hintEnabled,
         revealMode,
         model: selectedModel,
@@ -796,6 +852,19 @@ function StoryPage({
       setEntries(nextEntries)
       setQuestion('')
       playUiSound('reply', soundEnabled)
+      const nextRevealedHintIndexes = mergeHintIndexes(
+        revealedHintIndexes,
+        answer.matchedHintIndexes ?? [],
+        hintItems.length,
+      )
+      const didUnlockHint =
+        nextRevealedHintIndexes.length > revealedHintIndexes.length
+
+      if (didUnlockHint) {
+        setRevealedHintIndexes(nextRevealedHintIndexes)
+        setIsHintTrayOpen(true)
+        maybeShowHintUnlockGuide(nextRevealedHintIndexes.length)
+      }
       if (revealMode && answer.answer === '还原正确') {
         playUiSound('celebrate', soundEnabled)
         setShowTruth(true)
@@ -803,7 +872,7 @@ function StoryPage({
       } else if (
         !hasAcceptedLimitOverrun &&
         nextEntries.length +
-          revealedHintIndexes.length * hintSettings.hintCost >=
+          chargedHintIndexes.length * hintSettings.hintCost >=
           hintSettings.questionLimit
       ) {
         setTruthDialogMode('limit')
@@ -833,6 +902,15 @@ function StoryPage({
   function revealTruthAfterQuestionLimit() {
     setShowTruth(true)
     setTruthDialogMode('limitRevealed')
+  }
+
+  function maybeShowHintUnlockGuide(unlockedCount: number) {
+    if (unlockedCount === 0 || hasSeenHintUnlockGuide) {
+      return
+    }
+
+    setHasSeenHintUnlockGuide(true)
+    setShowHintUnlockGuide(true)
   }
 
   async function copyLink() {
@@ -996,6 +1074,23 @@ function StoryPage({
               </button>
             </article>
           ) : null}
+          {showHintUnlockGuide ? (
+            <article className="guide-message hint-unlock-guide">
+              <div>
+                <span>提示已解锁</span>
+                <div className="guide-message-copy">
+                  <p>你已经抓住关键线索，可以在设置里开启揭晓模式，说出完整答案。</p>
+                </div>
+              </div>
+              <button
+                aria-label="关闭提示解锁提醒"
+                type="button"
+                onClick={() => setShowHintUnlockGuide(false)}
+              >
+                <X size={16} />
+              </button>
+            </article>
+          ) : null}
           {entries.length === 0 ? (
             <div className="empty-chat">
               <Sparkles size={22} />
@@ -1026,7 +1121,8 @@ function StoryPage({
         ) : null}
 
         <form className="ask-form" onSubmit={handleSubmit}>
-          <textarea
+          <div className="ask-input-shell">
+            <textarea
             aria-label="输入你的问题"
             disabled={isLoading}
             maxLength={160}
@@ -1040,7 +1136,11 @@ function StoryPage({
             ref={questionInputRef}
             rows={1}
             value={question}
-          />
+            />
+            {hintItems.length > 0 ? (
+              <UnlockProgressBar percent={unlockProgressPercent} />
+            ) : null}
+          </div>
           <button disabled={isLoading} type="submit">
             {isLoading ? (
               <RefreshCw className="spin" size={18} />
@@ -1083,6 +1183,9 @@ function StoryPage({
             setEntries([])
             setShowTruth(false)
             setRevealedHintIndexes([])
+            setChargedHintIndexes([])
+            setHasSeenHintUnlockGuide(false)
+            setShowHintUnlockGuide(false)
             setHasAcceptedLimitOverrun(false)
             setTruthDialogMode(null)
             setPendingHintIndex(null)
@@ -1417,6 +1520,22 @@ function HintShelf({
           )
         })}
       </div>
+    </div>
+  )
+}
+
+function UnlockProgressBar({ percent }: { percent: number }) {
+  return (
+    <div
+      aria-label={`提示解锁进度 ${percent}%`}
+      className="unlock-progress"
+    >
+      <span
+        aria-hidden="true"
+        className="unlock-progress-track"
+        style={{ '--unlock-progress': percent + '%' } as CSSProperties}
+      />
+      <strong>{percent}%</strong>
     </div>
   )
 }
@@ -1977,15 +2096,19 @@ function isAiModelId(value: string | null): value is AiModelId {
 }
 
 function loadStoryProgress(storyId: string): {
+  chargedHintIndexes: number[]
   entries: ChatEntry[]
   hasAcceptedLimitOverrun: boolean
+  hasSeenHintUnlockGuide: boolean
   revealedHintIndexes: number[]
   showTruth: boolean
 } {
   if (typeof window === 'undefined') {
     return {
+      chargedHintIndexes: [],
       entries: [],
       hasAcceptedLimitOverrun: false,
+      hasSeenHintUnlockGuide: false,
       revealedHintIndexes: [],
       showTruth: false,
     }
@@ -1995,33 +2118,46 @@ function loadStoryProgress(storyId: string): {
     const raw = window.localStorage.getItem(getStoryProgressStorageKey(storyId))
     if (!raw) {
       return {
+        chargedHintIndexes: [],
         entries: [],
         hasAcceptedLimitOverrun: false,
+        hasSeenHintUnlockGuide: false,
         revealedHintIndexes: [],
         showTruth: false,
       }
     }
 
     const parsed = JSON.parse(raw) as Partial<{
+      chargedHintIndexes: unknown
       entries: unknown
       hasAcceptedLimitOverrun: unknown
+      hasSeenHintUnlockGuide: unknown
       revealedHintIndexes: unknown
       showTruth: unknown
     }>
+    const revealedHintIndexes = Array.isArray(parsed.revealedHintIndexes)
+      ? parsed.revealedHintIndexes.filter(isHintIndex)
+      : []
+    const chargedHintIndexes = Array.isArray(parsed.chargedHintIndexes)
+      ? parsed.chargedHintIndexes.filter(isHintIndex)
+      : revealedHintIndexes
+
     return {
+      chargedHintIndexes,
       entries: Array.isArray(parsed.entries)
         ? parsed.entries.filter(isChatEntry)
         : [],
       hasAcceptedLimitOverrun: parsed.hasAcceptedLimitOverrun === true,
-      revealedHintIndexes: Array.isArray(parsed.revealedHintIndexes)
-        ? parsed.revealedHintIndexes.filter(isHintIndex)
-        : [],
+      hasSeenHintUnlockGuide: parsed.hasSeenHintUnlockGuide === true,
+      revealedHintIndexes,
       showTruth: parsed.showTruth === true,
     }
   } catch {
     return {
+      chargedHintIndexes: [],
       entries: [],
       hasAcceptedLimitOverrun: false,
+      hasSeenHintUnlockGuide: false,
       revealedHintIndexes: [],
       showTruth: false,
     }
@@ -2035,8 +2171,10 @@ function isStoryCompleted(storyId: string) {
 function saveStoryProgress(
   storyId: string,
   progress: {
+    chargedHintIndexes: number[]
     entries: ChatEntry[]
     hasAcceptedLimitOverrun: boolean
+    hasSeenHintUnlockGuide: boolean
     revealedHintIndexes: number[]
     showTruth: boolean
   },
@@ -2049,9 +2187,11 @@ function saveStoryProgress(
     window.localStorage.setItem(
       getStoryProgressStorageKey(storyId),
       JSON.stringify({
-        version: 2,
+        version: 3,
+        chargedHintIndexes: progress.chargedHintIndexes,
         entries: progress.entries,
         hasAcceptedLimitOverrun: progress.hasAcceptedLimitOverrun,
+        hasSeenHintUnlockGuide: progress.hasSeenHintUnlockGuide,
         revealedHintIndexes: progress.revealedHintIndexes,
         showTruth: progress.showTruth,
         updatedAt: new Date().toISOString(),

@@ -65,7 +65,142 @@ test('proxies a request with the server-side API key', async () => {
 
   assert.equal(response.statusCode, 200)
   assert.equal(response.headers['access-control-allow-origin'], '*')
-  assert.deepEqual(JSON.parse(response.body), { answer: '是', label: 'yes' })
+  assert.deepEqual(JSON.parse(response.body), {
+    answer: '是',
+    label: 'yes',
+    matchedHintIndexes: [],
+  })
+})
+
+test('returns matched hint indexes from valid candidates only', async () => {
+  process.env.AGNES_API_KEY = 'server-only-test-key'
+  let promptBody
+  globalThis.fetch = async (url, init) => {
+    promptBody = JSON.parse(init.body)
+
+    return new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content:
+                '{"answer":"是","matchedHintIndexes":[2,99,2],"hint":"short"}',
+            },
+          },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )
+  }
+
+  const response = await handler(
+    makeEvent({
+      method: 'POST',
+      origin: 'https://turtle.handong-joy.xyz',
+      body: {
+        storyId: 'test-story',
+        surface: '汤面',
+        truth: '汤底',
+        question: '雨具是不是改变了触及范围？',
+        hintCandidates: [
+          { index: 1, text: '问题不在电梯坏了。' },
+          { index: 2, text: '雨具改变了触及范围。' },
+        ],
+        hintEnabled: true,
+        revealMode: false,
+        model: 'agnes-2.0-flash',
+      },
+    }),
+  )
+
+  assert.match(promptBody.messages[1].content, /hintCandidates:/)
+  assert.match(promptBody.messages[1].content, /2: 雨具改变了触及范围。/)
+  assert.deepEqual(JSON.parse(response.body), {
+    answer: '是',
+    label: 'yes',
+    hint: 'short',
+    matchedHintIndexes: [2],
+  })
+})
+
+test('drops loose hint matches without keyword overlap', async () => {
+  process.env.AGNES_API_KEY = 'server-only-test-key'
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: '{"answer":"是","matchedHintIndexes":[1]}',
+            },
+          },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )
+
+  const response = await handler(
+    makeEvent({
+      method: 'POST',
+      origin: 'https://turtle.handong-joy.xyz',
+      body: {
+        storyId: 'test-story',
+        surface: '汤面',
+        truth: '汤底',
+        question: '这个人是不是很伤心？',
+        hintCandidates: [{ index: 1, text: '雨具改变了触及范围。' }],
+        hintEnabled: false,
+        revealMode: false,
+        model: 'agnes-2.0-flash',
+      },
+    }),
+  )
+
+  assert.deepEqual(JSON.parse(response.body), {
+    answer: '是',
+    label: 'yes',
+    matchedHintIndexes: [],
+  })
+})
+
+test('allows a single strong hint keyword overlap', async () => {
+  process.env.AGNES_API_KEY = 'server-only-test-key'
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: '{"answer":"是","matchedHintIndexes":[2]}',
+            },
+          },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )
+
+  const response = await handler(
+    makeEvent({
+      method: 'POST',
+      origin: 'https://turtle.handong-joy.xyz',
+      body: {
+        storyId: 'test-story',
+        surface: '汤面',
+        truth: '汤底',
+        question: '和雨具有关系吗？',
+        hintCandidates: [{ index: 2, text: '雨具改变了触及范围。' }],
+        hintEnabled: false,
+        revealMode: false,
+        model: 'agnes-2.0-flash',
+      },
+    }),
+  )
+
+  assert.deepEqual(JSON.parse(response.body), {
+    answer: '是',
+    label: 'yes',
+    matchedHintIndexes: [2],
+  })
 })
 
 test('does not switch models when the selected provider is unavailable', async () => {
