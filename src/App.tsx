@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -27,7 +27,8 @@ import { getCurrentStoryId, getStoryPath } from './utils/routes'
 const STORY_PROGRESS_STORAGE_PREFIX = 'turtle-soup-history:'
 const MODEL_STORAGE_KEY = 'turtle-soup-model'
 const GUIDE_MESSAGE_STORAGE_KEY = 'turtle-soup-guide-message'
-const DEFAULT_AI_MODEL: AiModelId = 'agnes-2.0-flash'
+const SOUND_ENABLED_STORAGE_KEY = 'turtle-soup-sound-enabled'
+const DEFAULT_AI_MODEL: AiModelId = 'deepseek-v4-flash'
 
 const modelOptions: Array<{ id: AiModelId; label: string }> = [
   { id: 'agnes-2.0-flash', label: 'Agnes 2.0 Flash' },
@@ -185,15 +186,7 @@ function HomePage() {
   }, [currentPage, pageCount])
 
   function openRandomStory() {
-    const availableStories = stories.filter(
-      (story) => !completedStoryIds.has(story.id),
-    )
-    const candidateStories =
-      availableStories.length > 0 ? availableStories : stories
-    const randomStory =
-      candidateStories[Math.floor(Math.random() * candidateStories.length)]
-
-    window.location.href = getStoryPath(randomStory.id)
+    openRandomUnrevealedStory()
   }
 
   return (
@@ -335,8 +328,9 @@ function HomePage() {
 
       {paginatedStories.length > 0 ? (
         <section className="story-grid" aria-label="海龟汤题目列表">
-          {paginatedStories.map((story) => (
+          {paginatedStories.map((story, index) => (
             <StoryCard
+              animationIndex={index}
               completed={completedStoryIds.has(story.id)}
               key={story.id}
               story={story}
@@ -495,11 +489,44 @@ function getVisiblePageItems(
   return items
 }
 
-function StoryCard({ completed, story }: { completed: boolean; story: Story }) {
+function getUnrevealedStories(excludedStoryId?: string) {
+  return stories.filter(
+    (candidate) =>
+      candidate.id !== excludedStoryId && !isStoryCompleted(candidate.id),
+  )
+}
+
+function openRandomUnrevealedStory(excludedStoryId?: string) {
+  const unrevealedStories = getUnrevealedStories(excludedStoryId)
+  const fallbackStories = excludedStoryId
+    ? stories.filter((candidate) => candidate.id !== excludedStoryId)
+    : stories
+  const candidateStories =
+    unrevealedStories.length > 0 ? unrevealedStories : fallbackStories
+  if (candidateStories.length === 0) {
+    return
+  }
+
+  const randomStory =
+    candidateStories[Math.floor(Math.random() * candidateStories.length)]
+
+  window.location.href = getStoryPath(randomStory.id)
+}
+
+function StoryCard({
+  animationIndex = 0,
+  completed,
+  story,
+}: {
+  animationIndex?: number
+  completed: boolean
+  story: Story
+}) {
   return (
     <a
       className={completed ? 'story-card completed' : 'story-card'}
       href={getStoryPath(story.id)}
+      style={{ '--card-index': animationIndex } as CSSProperties}
     >
       <div className="card-header">
         <div className="card-badges">
@@ -561,6 +588,7 @@ function StoryPage({
   const [showGuideMessage, setShowGuideMessage] = useState(
     loadGuideMessagePreference,
   )
+  const [soundEnabled, setSoundEnabled] = useState(loadSoundPreference)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
   const questionInputRef = useRef<HTMLTextAreaElement>(null)
@@ -595,6 +623,10 @@ function StoryPage({
   useEffect(() => {
     saveGuideMessagePreference(showGuideMessage)
   }, [showGuideMessage])
+
+  useEffect(() => {
+    saveSoundPreference(soundEnabled)
+  }, [soundEnabled])
 
   useEffect(() => {
     if (!isSettingsOpen) {
@@ -737,6 +769,7 @@ function StoryPage({
 
     setIsLoading(true)
     setError('')
+    playUiSound('send', soundEnabled)
 
     try {
       const answer = await askAi({
@@ -762,7 +795,9 @@ function StoryPage({
 
       setEntries(nextEntries)
       setQuestion('')
+      playUiSound('reply', soundEnabled)
       if (revealMode && answer.answer === '还原正确') {
+        playUiSound('celebrate', soundEnabled)
         setShowTruth(true)
         setTruthDialogMode('revealed')
       } else if (
@@ -805,12 +840,7 @@ function StoryPage({
   }
 
   function openRandomStory() {
-    const otherStories = stories.filter((candidate) => candidate.id !== story.id)
-    const candidateStories = otherStories.length > 0 ? otherStories : stories
-    const randomStory =
-      candidateStories[Math.floor(Math.random() * candidateStories.length)]
-
-    window.location.href = getStoryPath(randomStory.id)
+    openRandomUnrevealedStory(story.id)
   }
 
   function openNextStory() {
@@ -826,13 +856,22 @@ function StoryPage({
   return (
     <main className="app-shell story-layout">
       <nav className="story-nav" aria-label="页面导航">
-        <a className="icon-button" href="#">
-          <ArrowLeft size={18} />
-          返回
+        <a
+          aria-label="返回首页"
+          className="nav-round-button"
+          href="#"
+          title="返回首页"
+        >
+          <ArrowLeft size={19} />
         </a>
-        <button className="icon-button" type="button" onClick={copyLink}>
+        <button
+          aria-label="复制链接"
+          className="nav-round-button"
+          title="复制链接"
+          type="button"
+          onClick={copyLink}
+        >
           <Link2 size={18} />
-          复制链接
         </button>
       </nav>
 
@@ -912,6 +951,14 @@ function StoryPage({
                   />
                   <span>显示玩法说明</span>
                 </label>
+                <label className="switch">
+                  <input
+                    checked={soundEnabled}
+                    type="checkbox"
+                    onChange={(event) => setSoundEnabled(event.target.checked)}
+                  />
+                  <span>音效</span>
+                </label>
               </div>
             ) : null}
           </div>
@@ -955,7 +1002,13 @@ function StoryPage({
               <p>先问一个能用“是 / 不是 / 是也不是 / 无关”回答的问题。</p>
             </div>
           ) : (
-            entries.map((entry) => <ChatBubble entry={entry} key={entry.id} />)
+            entries.map((entry, index) => (
+              <ChatBubble
+                entry={entry}
+                entryIndex={index}
+                key={entry.id}
+              />
+            ))
           )}
         </div>
 
@@ -1273,9 +1326,18 @@ function ModelPicker({
   )
 }
 
-function ChatBubble({ entry }: { entry: ChatEntry }) {
+function ChatBubble({
+  entry,
+  entryIndex = 0,
+}: {
+  entry: ChatEntry
+  entryIndex?: number
+}) {
   return (
-    <article className="chat-entry">
+    <article
+      className="chat-entry"
+      style={{ '--entry-index': entryIndex } as CSSProperties}
+    >
       <div className="question-bubble">
         <span>你问</span>
         <p>{entry.question}</p>
@@ -1313,7 +1375,10 @@ function HintShelf({
   return (
     <div className="hint-shelf" aria-label="提示栏">
       <div className="hint-meter">
-        <span>提问额度</span>
+        <span>
+          <CircleHelp size={15} />
+          提问额度
+        </span>
         <strong>
           {used}/{limit}
         </strong>
@@ -1332,6 +1397,7 @@ function HintShelf({
       <div className="hint-strip">
         {hints.map((hint, index) => {
           const isRevealed = revealedIndexes.includes(index)
+          const hintText = hint.replace(/[。．.]/g, '')
 
           return (
             <button
@@ -1346,7 +1412,7 @@ function HintShelf({
                 <Lightbulb size={15} />
                 提示 {index + 1}
               </span>
-              {isRevealed ? <strong>{hint}</strong> : null}
+              {isRevealed ? <strong>{hintText}</strong> : null}
             </button>
           )
         })}
@@ -1685,6 +1751,9 @@ function loadSelectedModel(): AiModelId {
 
   try {
     const raw = window.localStorage.getItem(MODEL_STORAGE_KEY)
+    if (raw === 'agnes-2.0-flash') {
+      return DEFAULT_AI_MODEL
+    }
     return isAiModelId(raw) ? raw : DEFAULT_AI_MODEL
   } catch {
     return DEFAULT_AI_MODEL
@@ -1728,6 +1797,179 @@ function saveGuideMessagePreference(isVisible: boolean) {
   } catch {
     // The in-memory preference still applies for this session.
   }
+}
+
+function loadSoundPreference() {
+  if (typeof window === 'undefined') {
+    return true
+  }
+
+  try {
+    return window.localStorage.getItem(SOUND_ENABLED_STORAGE_KEY) !== 'muted'
+  } catch {
+    return true
+  }
+}
+
+function saveSoundPreference(isEnabled: boolean) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(
+      SOUND_ENABLED_STORAGE_KEY,
+      isEnabled ? 'enabled' : 'muted',
+    )
+  } catch {
+    // The in-memory preference still applies for this session.
+  }
+}
+
+type UiSound = 'send' | 'reply' | 'celebrate'
+type AudioWindow = Window &
+  typeof globalThis & {
+    turtleSoupAudioContext?: AudioContext
+    webkitAudioContext?: typeof AudioContext
+  }
+
+function playUiSound(sound: UiSound, isEnabled: boolean) {
+  if (!isEnabled || typeof window === 'undefined') {
+    return
+  }
+
+  const audioWindow = window as AudioWindow
+  const AudioContextCtor =
+    audioWindow.AudioContext ?? audioWindow.webkitAudioContext
+
+  if (!AudioContextCtor) {
+    return
+  }
+
+  try {
+    const context = getUiAudioContext(AudioContextCtor)
+    const now = context.currentTime
+
+    if (sound === 'send') {
+      playTone(context, {
+        frequency: 560,
+        startTime: now,
+        duration: 0.09,
+        gain: 0.032,
+        type: 'triangle',
+      })
+      playTone(context, {
+        frequency: 840,
+        startTime: now + 0.045,
+        duration: 0.11,
+        gain: 0.024,
+        type: 'sine',
+      })
+      return
+    }
+
+    if (sound === 'reply') {
+      playTone(context, {
+        frequency: 740,
+        startTime: now,
+        duration: 0.12,
+        gain: 0.026,
+        type: 'sine',
+      })
+      playTone(context, {
+        frequency: 990,
+        startTime: now + 0.075,
+        duration: 0.16,
+        gain: 0.02,
+        type: 'triangle',
+      })
+      return
+    }
+
+    playTone(context, {
+      frequency: 740,
+      startTime: now,
+      duration: 0.14,
+      gain: 0.034,
+      type: 'sine',
+    })
+    playTone(context, {
+      frequency: 980,
+      startTime: now + 0.09,
+      duration: 0.17,
+      gain: 0.03,
+      type: 'triangle',
+    })
+    playTone(context, {
+      frequency: 1318,
+      startTime: now + 0.19,
+      duration: 0.22,
+      gain: 0.026,
+      type: 'triangle',
+    })
+  } catch {
+    // Audio feedback is decorative; never block the game flow.
+  }
+}
+
+function getUiAudioContext(
+  AudioContextCtor: typeof AudioContext,
+): AudioContext {
+  const audioWindow = window as AudioWindow
+
+  if (!audioWindow.turtleSoupAudioContext) {
+    audioWindow.turtleSoupAudioContext = new AudioContextCtor()
+  }
+
+  const context = audioWindow.turtleSoupAudioContext
+
+  if (context.state === 'suspended') {
+    void context.resume()
+  }
+
+  return context
+}
+
+function playTone(
+  context: AudioContext,
+  {
+    duration,
+    frequency,
+    gain,
+    startTime,
+    type,
+  }: {
+    duration: number
+    frequency: number
+    gain: number
+    startTime: number
+    type: OscillatorType
+  },
+) {
+  const oscillator = context.createOscillator()
+  const envelope = context.createGain()
+  const filter = context.createBiquadFilter()
+
+  oscillator.type = type
+  oscillator.frequency.setValueAtTime(frequency, startTime)
+  oscillator.frequency.exponentialRampToValueAtTime(
+    frequency * 1.08,
+    startTime + duration,
+  )
+  filter.type = 'lowpass'
+  filter.frequency.setValueAtTime(2400, startTime)
+  envelope.gain.setValueAtTime(0.0001, startTime)
+  envelope.gain.exponentialRampToValueAtTime(gain, startTime + 0.015)
+  envelope.gain.exponentialRampToValueAtTime(
+    0.0001,
+    startTime + duration,
+  )
+
+  oscillator.connect(filter)
+  filter.connect(envelope)
+  envelope.connect(context.destination)
+  oscillator.start(startTime)
+  oscillator.stop(startTime + duration + 0.03)
 }
 
 function isAiModelId(value: string | null): value is AiModelId {
