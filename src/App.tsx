@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
+  ArrowRight,
+  ArrowDown,
   ChevronDown,
   CheckCircle2,
   CircleHelp,
@@ -13,17 +15,30 @@ import {
   Link2,
   RefreshCw,
   Send,
+  Settings,
+  ShieldCheck,
+  ShieldQuestion,
+  SlidersHorizontal,
   Sparkles,
   Shuffle,
 } from 'lucide-react'
 import { stories, getStoryById } from './data/stories'
-import { askAi } from './services/aiClient'
+import { ApiKeyUnlockError, askAi } from './services/aiClient'
+import {
+  clearSavedApiShift,
+  hasConfiguredEncryptedApiKey,
+  hasUnlockedApiAccess,
+  unlockApiAccess,
+} from './services/apiKeyVault'
 import type { AiModelId, ChatEntry, Difficulty, Story } from './types/story'
 import { getCurrentStoryId, getStoryPath } from './utils/routes'
 
 const STORY_PROGRESS_STORAGE_PREFIX = 'turtle-soup-history:'
 const MODEL_STORAGE_KEY = 'turtle-soup-model'
-const DEFAULT_AI_MODEL: AiModelId = 'agnes-2.0-flash'
+const GUIDE_MESSAGE_STORAGE_KEY = 'turtle-soup-guide-message'
+const SOUND_ENABLED_STORAGE_KEY = 'turtle-soup-sound-enabled'
+const API_UNLOCKED_STORAGE_EVENT = 'turtle-soup-api-unlocked'
+const DEFAULT_AI_MODEL: AiModelId = 'deepseek-v4-flash'
 
 const modelOptions: Array<{ id: AiModelId; label: string }> = [
   { id: 'agnes-2.0-flash', label: 'Agnes 2.0 Flash' },
@@ -102,6 +117,7 @@ function HomePage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [showCompleted, setShowCompleted] = useState(false)
   const [showUncompleted, setShowUncompleted] = useState(false)
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
   const [pageSize, setPageSize] = useState<(typeof pageSizeOptions)[number]>(10)
   const [currentPage, setCurrentPage] = useState(1)
   const tags = useMemo(
@@ -180,15 +196,7 @@ function HomePage() {
   }, [currentPage, pageCount])
 
   function openRandomStory() {
-    const availableStories = stories.filter(
-      (story) => !completedStoryIds.has(story.id),
-    )
-    const candidateStories =
-      availableStories.length > 0 ? availableStories : stories
-    const randomStory =
-      candidateStories[Math.floor(Math.random() * candidateStories.length)]
-
-    window.location.href = getStoryPath(randomStory.id)
+    openRandomUnrevealedStory()
   }
 
   return (
@@ -234,67 +242,94 @@ function HomePage() {
           />
         </label>
 
-        <div className="home-controls">
-          <fieldset className="reveal-filter">
-            {/* <legend>揭晓状态</legend> */}
-            <label>
-              <input
-                checked={showCompleted}
-                type="checkbox"
-                onChange={(event) => setShowCompleted(event.target.checked)}
-              />
-              已揭晓
-            </label>
-            <label>
-              <input
-                checked={showUncompleted}
-                type="checkbox"
-                onChange={(event) => setShowUncompleted(event.target.checked)}
-              />
-              未揭晓
-            </label>
-          </fieldset>
-        </div>
-      </section>
-
-      <section className="filter-row" aria-label="题目标签筛选">
-        {tags.map((tag) => (
-          <button
-            className={tag === activeTag ? 'chip active' : 'chip'}
-            key={tag}
-            type="button"
-            onClick={() =>
-              setActiveTag((currentTag) => (currentTag === tag ? '全部' : tag))
-            }
-          >
-            {tag}
-          </button>
-        ))}
         <button
-          className={activeDifficulty === '全部' ? 'chip active' : 'chip'}
+          aria-controls="home-filter-panel"
+          aria-expanded={isFilterPanelOpen}
+          className={
+            isFilterPanelOpen ||
+            activeTag !== '全部' ||
+            activeDifficulty !== '全部' ||
+            showCompleted ||
+            showUncompleted
+              ? 'filter-toggle active'
+              : 'filter-toggle'
+          }
           type="button"
-          onClick={() => setActiveDifficulty('全部')}
+          onClick={() => setIsFilterPanelOpen((isOpen) => !isOpen)}
         >
-          全部难度
+          <SlidersHorizontal size={18} />
+          筛选
         </button>
-        {difficultyOptions.map((difficulty) => (
-          <button
-            className={
-              activeDifficulty === difficulty
-                ? `chip difficulty-chip ${difficulty} active`
-                : `chip difficulty-chip ${difficulty}`
-            }
-            key={difficulty}
-            type="button"
-            onClick={() =>
-              setActiveDifficulty((currentDifficulty) =>
-                currentDifficulty === difficulty ? '全部' : difficulty,
-              )
-            }
-          >
-            {difficultyText[difficulty]}
-          </button>
-        ))}
+
+        {isFilterPanelOpen ? (
+          <div className="filter-tray" id="home-filter-panel">
+            <fieldset className="reveal-filter">
+              <label>
+                <input
+                  checked={showCompleted}
+                  type="checkbox"
+                  onChange={(event) => setShowCompleted(event.target.checked)}
+                />
+                已揭晓
+              </label>
+              <label>
+                <input
+                  checked={showUncompleted}
+                  type="checkbox"
+                  onChange={(event) => setShowUncompleted(event.target.checked)}
+                />
+                未揭晓
+              </label>
+            </fieldset>
+
+            <div className="filter-row" aria-label="题目标签筛选">
+              {tags.map((tag) => (
+                <button
+                  className={tag === activeTag ? 'chip active' : 'chip'}
+                  key={tag}
+                  type="button"
+                  onClick={() =>
+                    setActiveTag((currentTag) =>
+                      currentTag === tag ? '全部' : tag,
+                    )
+                  }
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+
+            <div className="filter-row" aria-label="题目难度筛选">
+              <button
+                className={
+                  activeDifficulty === '全部' ? 'chip active' : 'chip'
+                }
+                type="button"
+                onClick={() => setActiveDifficulty('全部')}
+              >
+                全部难度
+              </button>
+              {difficultyOptions.map((difficulty) => (
+                <button
+                  className={
+                    activeDifficulty === difficulty
+                      ? `chip difficulty-chip ${difficulty} active`
+                      : `chip difficulty-chip ${difficulty}`
+                  }
+                  key={difficulty}
+                  type="button"
+                  onClick={() =>
+                    setActiveDifficulty((currentDifficulty) =>
+                      currentDifficulty === difficulty ? '全部' : difficulty,
+                    )
+                  }
+                >
+                  {difficultyText[difficulty]}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </section>
 
       {/* <section className="filter-row" aria-label="题目难度筛选">
@@ -303,8 +338,9 @@ function HomePage() {
 
       {paginatedStories.length > 0 ? (
         <section className="story-grid" aria-label="海龟汤题目列表">
-          {paginatedStories.map((story) => (
+          {paginatedStories.map((story, index) => (
             <StoryCard
+              animationIndex={index}
               completed={completedStoryIds.has(story.id)}
               key={story.id}
               story={story}
@@ -435,6 +471,37 @@ function isSubsequence(needle: string, haystack: string) {
   return needle.length === 0
 }
 
+function mergeHintIndexes(
+  currentIndexes: number[],
+  nextIndexes: number[],
+  hintCount = 3,
+) {
+  return Array.from(
+    new Set(
+      [...currentIndexes, ...nextIndexes].filter(
+        (index) =>
+          Number.isInteger(index) && index >= 0 && index < hintCount,
+      ),
+    ),
+  ).sort((left, right) => left - right)
+}
+
+function getUnlockProgressPercent(
+  revealedCount: number,
+  hintCount: number,
+  showTruth: boolean,
+) {
+  if (showTruth) {
+    return 100
+  }
+
+  if (hintCount <= 0) {
+    return 0
+  }
+
+  return Math.min(99, revealedCount * 33)
+}
+
 function getVisiblePageItems(
   currentPage: number,
   pageCount: number,
@@ -463,11 +530,44 @@ function getVisiblePageItems(
   return items
 }
 
-function StoryCard({ completed, story }: { completed: boolean; story: Story }) {
+function getUnrevealedStories(excludedStoryId?: string) {
+  return stories.filter(
+    (candidate) =>
+      candidate.id !== excludedStoryId && !isStoryCompleted(candidate.id),
+  )
+}
+
+function openRandomUnrevealedStory(excludedStoryId?: string) {
+  const unrevealedStories = getUnrevealedStories(excludedStoryId)
+  const fallbackStories = excludedStoryId
+    ? stories.filter((candidate) => candidate.id !== excludedStoryId)
+    : stories
+  const candidateStories =
+    unrevealedStories.length > 0 ? unrevealedStories : fallbackStories
+  if (candidateStories.length === 0) {
+    return
+  }
+
+  const randomStory =
+    candidateStories[Math.floor(Math.random() * candidateStories.length)]
+
+  window.location.href = getStoryPath(randomStory.id)
+}
+
+function StoryCard({
+  animationIndex = 0,
+  completed,
+  story,
+}: {
+  animationIndex?: number
+  completed: boolean
+  story: Story
+}) {
   return (
     <a
       className={completed ? 'story-card completed' : 'story-card'}
       href={getStoryPath(story.id)}
+      style={{ '--card-index': animationIndex } as CSSProperties}
     >
       <div className="card-header">
         <div className="card-badges">
@@ -506,46 +606,78 @@ function StoryPage({
   selectedModel: AiModelId
   onSelectedModelChange: (model: AiModelId) => void
 }) {
+  const initialProgress = useMemo(() => loadStoryProgress(story.id), [story.id])
   const [question, setQuestion] = useState('')
   const [entries, setEntries] = useState<ChatEntry[]>(
-    () => loadStoryProgress(story.id).entries,
+    () => initialProgress.entries,
   )
-  const [hintEnabled, setHintEnabled] = useState(false)
+  const [hintEnabled, setHintEnabled] = useState(true)
   const [revealedHintIndexes, setRevealedHintIndexes] = useState<number[]>(
-    () => loadStoryProgress(story.id).revealedHintIndexes,
+    () => initialProgress.revealedHintIndexes,
   )
+  const [chargedHintIndexes, setChargedHintIndexes] = useState<number[]>(
+    () => initialProgress.chargedHintIndexes,
+  )
+  const [hasSeenHintUnlockGuide, setHasSeenHintUnlockGuide] = useState(
+    () => initialProgress.hasSeenHintUnlockGuide,
+  )
+  const [showHintUnlockGuide, setShowHintUnlockGuide] = useState(false)
   const [hasAcceptedLimitOverrun, setHasAcceptedLimitOverrun] = useState(
-    () => loadStoryProgress(story.id).hasAcceptedLimitOverrun,
+    () => initialProgress.hasAcceptedLimitOverrun,
   )
   const [revealMode, setRevealMode] = useState(false)
   const [showTruth, setShowTruth] = useState(
-    () => loadStoryProgress(story.id).showTruth,
+    () => initialProgress.showTruth,
   )
   const [truthDialogMode, setTruthDialogMode] =
     useState<TruthDialogMode | null>(null)
   const [pendingHintIndex, setPendingHintIndex] = useState<number | null>(null)
   const [isHintTrayOpen, setIsHintTrayOpen] = useState(false)
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [showGuideMessage, setShowGuideMessage] = useState(
+    loadGuideMessagePreference,
+  )
+  const [showRevealModeToast, setShowRevealModeToast] = useState(false)
+  const [revealModeToastKey, setRevealModeToastKey] = useState(0)
+  const [soundEnabled, setSoundEnabled] = useState(loadSoundPreference)
+  const [isApiUnlocked, setIsApiUnlocked] = useState(hasUnlockedApiAccess)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
+  const [showScrollLatestButton, setShowScrollLatestButton] = useState(false)
+  const [isReturningToLatest, setIsReturningToLatest] = useState(false)
+  const chatListRef = useRef<HTMLDivElement>(null)
   const questionInputRef = useRef<HTMLTextAreaElement>(null)
+  const isProgrammaticChatScrollRef = useRef(false)
+  const programmaticChatScrollTimeoutRef = useRef<number | null>(null)
+  const previousEntryCountRef = useRef(entries.length)
+  const settingsRef = useRef<HTMLDivElement>(null)
   const hintSettings = story.hints ?? defaultHintSettings[story.difficulty]
   const hintItems = story.hints?.items ?? []
   const usedQuestionBudget =
-    entries.length + revealedHintIndexes.length * hintSettings.hintCost
+    entries.length + chargedHintIndexes.length * hintSettings.hintCost
   const isQuestionBudgetExhausted =
-    usedQuestionBudget >= hintSettings.questionLimit ||
-    (hintItems.length > 0 && revealedHintIndexes.length >= hintItems.length)
+    usedQuestionBudget >= hintSettings.questionLimit
+  const canUseAi = hasConfiguredEncryptedApiKey() && isApiUnlocked
+  const unlockProgressPercent = getUnlockProgressPercent(
+    revealedHintIndexes.length,
+    hintItems.length,
+    showTruth,
+  )
 
   useEffect(() => {
     saveStoryProgress(story.id, {
+      chargedHintIndexes,
       entries,
       hasAcceptedLimitOverrun,
+      hasSeenHintUnlockGuide,
       revealedHintIndexes,
       showTruth,
     })
   }, [
+    chargedHintIndexes,
     entries,
     hasAcceptedLimitOverrun,
+    hasSeenHintUnlockGuide,
     revealedHintIndexes,
     showTruth,
     story.id,
@@ -554,6 +686,113 @@ function StoryPage({
   useEffect(() => {
     resizeQuestionInput()
   }, [question])
+
+  useEffect(() => {
+    return () => {
+      if (programmaticChatScrollTimeoutRef.current !== null) {
+        window.clearTimeout(programmaticChatScrollTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    const previousEntryCount = previousEntryCountRef.current
+    previousEntryCountRef.current = entries.length
+
+    if (entries.length === 0) {
+      setShowScrollLatestButton(false)
+      return
+    }
+
+    let nextFrameId = 0
+    const frameId = window.requestAnimationFrame(() => {
+      nextFrameId = window.requestAnimationFrame(() => {
+        scrollToLatestChat(
+          entries.length > previousEntryCount ? 'smooth' : 'auto',
+        )
+      })
+    })
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      window.cancelAnimationFrame(nextFrameId)
+    }
+  }, [entries.length])
+
+  useEffect(() => {
+    if (!showTruth || hintItems.length === 0) {
+      return
+    }
+
+    const allHintIndexes = hintItems.map((_, index) => index)
+    if (allHintIndexes.every((index) => revealedHintIndexes.includes(index))) {
+      return
+    }
+
+    setRevealedHintIndexes((current) =>
+      mergeHintIndexes(current, allHintIndexes, hintItems.length),
+    )
+    setIsHintTrayOpen(true)
+  }, [hintItems, revealedHintIndexes, showTruth])
+
+  useEffect(() => {
+    saveGuideMessagePreference(showGuideMessage)
+  }, [showGuideMessage])
+
+  useEffect(() => {
+    if (!showRevealModeToast) {
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setShowRevealModeToast(false)
+    }, 1900)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [showRevealModeToast, revealModeToastKey])
+
+  useEffect(() => {
+    saveSoundPreference(soundEnabled)
+  }, [soundEnabled])
+
+  useEffect(() => {
+    function handleApiUnlocked() {
+      setIsApiUnlocked(hasUnlockedApiAccess())
+      setError('')
+    }
+
+    window.addEventListener(API_UNLOCKED_STORAGE_EVENT, handleApiUnlocked)
+    window.addEventListener('storage', handleApiUnlocked)
+    return () => {
+      window.removeEventListener(API_UNLOCKED_STORAGE_EVENT, handleApiUnlocked)
+      window.removeEventListener('storage', handleApiUnlocked)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isSettingsOpen) {
+      return
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!settingsRef.current?.contains(event.target as Node)) {
+        setIsSettingsOpen(false)
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setIsSettingsOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isSettingsOpen])
 
   useEffect(() => {
     if (!truthDialogMode || truthDialogMode === 'limit') {
@@ -594,21 +833,26 @@ function StoryPage({
       return
     }
 
-    const nextRevealedHintIndexes = [
-      ...revealedHintIndexes,
-      pendingHintIndex,
-    ].sort(
-      (left, right) => left - right,
+    const nextRevealedHintIndexes = mergeHintIndexes(
+      revealedHintIndexes,
+      [pendingHintIndex],
+      hintItems.length,
+    )
+    const nextChargedHintIndexes = mergeHintIndexes(
+      chargedHintIndexes,
+      [pendingHintIndex],
+      hintItems.length,
     )
 
     setRevealedHintIndexes(nextRevealedHintIndexes)
+    setChargedHintIndexes(nextChargedHintIndexes)
+    maybeShowHintUnlockGuide(nextRevealedHintIndexes.length)
     setPendingHintIndex(null)
 
     if (
       !hasAcceptedLimitOverrun &&
-      (entries.length + nextRevealedHintIndexes.length * hintSettings.hintCost >=
-        hintSettings.questionLimit ||
-        nextRevealedHintIndexes.length >= hintItems.length)
+      entries.length + nextChargedHintIndexes.length * hintSettings.hintCost >=
+        hintSettings.questionLimit
     ) {
       setTruthDialogMode('limit')
       return
@@ -641,6 +885,64 @@ function StoryPage({
         : 'hidden'
   }
 
+  function isChatScrolledToLatest() {
+    const list = chatListRef.current
+
+    if (!list) {
+      return true
+    }
+
+    return list.scrollHeight - list.scrollTop - list.clientHeight < 36
+  }
+
+  function updateScrollLatestButton() {
+    if (isProgrammaticChatScrollRef.current) {
+      if (isChatScrolledToLatest()) {
+        isProgrammaticChatScrollRef.current = false
+        setIsReturningToLatest(false)
+      } else {
+        setShowScrollLatestButton(false)
+        return
+      }
+    }
+
+    setShowScrollLatestButton(!isChatScrolledToLatest())
+  }
+
+  function scrollToLatestChat(behavior: ScrollBehavior = 'smooth') {
+    const list = chatListRef.current
+
+    if (!list) {
+      return
+    }
+
+    isProgrammaticChatScrollRef.current = true
+    setIsReturningToLatest(true)
+    if (programmaticChatScrollTimeoutRef.current !== null) {
+      window.clearTimeout(programmaticChatScrollTimeoutRef.current)
+    }
+    setShowScrollLatestButton(false)
+
+    list.scrollTo({
+      top: list.scrollHeight,
+      behavior,
+    })
+
+    programmaticChatScrollTimeoutRef.current = window.setTimeout(() => {
+      isProgrammaticChatScrollRef.current = false
+      setIsReturningToLatest(false)
+      updateScrollLatestButton()
+    }, behavior === 'smooth' ? 520 : 0)
+  }
+
+  function focusQuestionInput() {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        questionInputRef.current?.focus()
+      })
+    })
+  }
+
   function handleQuestionKeyDown(
     event: React.KeyboardEvent<HTMLTextAreaElement>,
   ) {
@@ -665,19 +967,34 @@ function StoryPage({
       return
     }
 
+    if (!canUseAi) {
+      setError(
+        hasConfiguredEncryptedApiKey()
+          ? '先在设置里输入凯撒偏移量解锁 API。'
+          : '当前构建未配置加密 API key。',
+      )
+      return
+    }
+
     if (maybeOpenQuestionLimitDialog()) {
       return
     }
 
     setIsLoading(true)
     setError('')
+    playUiSound('send', soundEnabled)
+    let shouldFocusAfterReply = false
 
     try {
+      const hintCandidates = hintItems
+        .map((text, index) => ({ index, text }))
+        .filter(({ index }) => !revealedHintIndexes.includes(index))
       const answer = await askAi({
         storyId: story.id,
         surface: story.surface,
         truth: story.truth,
         question: trimmedQuestion,
+        hintCandidates,
         hintEnabled,
         revealMode,
         model: selectedModel,
@@ -696,21 +1013,46 @@ function StoryPage({
 
       setEntries(nextEntries)
       setQuestion('')
+      playUiSound('reply', soundEnabled)
+      const nextRevealedHintIndexes = mergeHintIndexes(
+        revealedHintIndexes,
+        answer.matchedHintIndexes ?? [],
+        hintItems.length,
+      )
+      const didUnlockHint =
+        nextRevealedHintIndexes.length > revealedHintIndexes.length
+
+      if (didUnlockHint) {
+        setRevealedHintIndexes(nextRevealedHintIndexes)
+        setIsHintTrayOpen(true)
+        maybeShowHintUnlockGuide(nextRevealedHintIndexes.length)
+      }
       if (revealMode && answer.answer === '还原正确') {
+        playUiSound('celebrate', soundEnabled)
         setShowTruth(true)
         setTruthDialogMode('revealed')
       } else if (
         !hasAcceptedLimitOverrun &&
         nextEntries.length +
-          revealedHintIndexes.length * hintSettings.hintCost >=
+          chargedHintIndexes.length * hintSettings.hintCost >=
           hintSettings.questionLimit
       ) {
         setTruthDialogMode('limit')
+      } else {
+        shouldFocusAfterReply = true
       }
-    } catch {
-      setError('暂时没有回应，请稍后再试。')
+    } catch (error) {
+      console.error('AI request failed', error)
+      setError(
+        error instanceof ApiKeyUnlockError
+          ? 'API 解锁状态失效，请重新输入凯撒偏移量。'
+          : '暂时没有回应，请稍后再试。',
+      )
     } finally {
       setIsLoading(false)
+      if (shouldFocusAfterReply) {
+        focusQuestionInput()
+      }
     }
   }
 
@@ -733,31 +1075,76 @@ function StoryPage({
     setTruthDialogMode('limitRevealed')
   }
 
+  function maybeShowHintUnlockGuide(unlockedCount: number) {
+    if (unlockedCount === 0 || hasSeenHintUnlockGuide) {
+      return
+    }
+
+    setHasSeenHintUnlockGuide(true)
+    setShowHintUnlockGuide(true)
+  }
+
+  function openRevealModeFromGuide() {
+    if (isLoading) {
+      return
+    }
+
+    setRevealMode(true)
+    setShowHintUnlockGuide(false)
+    setRevealModeToastKey((current) => current + 1)
+    setShowRevealModeToast(true)
+  }
+
   async function copyLink() {
     await navigator.clipboard.writeText(window.location.href)
+  }
+
+  function openRandomStory() {
+    openRandomUnrevealedStory(story.id)
+  }
+
+  function openNextStory() {
+    const currentIndex = stories.findIndex(
+      (candidate) => candidate.id === story.id,
+    )
+    const nextStory =
+      stories[currentIndex >= 0 ? (currentIndex + 1) % stories.length : 0]
+
+    window.location.href = getStoryPath(nextStory.id)
   }
 
   return (
     <main className="app-shell story-layout">
       <nav className="story-nav" aria-label="页面导航">
-        <a className="icon-button" href="#">
-          <ArrowLeft size={18} />
-          返回
+        <a
+          aria-label="返回首页"
+          className="nav-round-button"
+          href="#"
+          title="返回首页"
+        >
+          <ArrowLeft size={19} />
         </a>
-        <button className="icon-button" type="button" onClick={copyLink}>
+        <button
+          aria-label="复制链接"
+          className="nav-round-button"
+          title="复制链接"
+          type="button"
+          onClick={copyLink}
+        >
           <Link2 size={18} />
-          复制链接
         </button>
       </nav>
 
       <section className="story-title">
         <div>
           <p className="eyebrow">当前汤题</p>
-          <h1>{story.title}</h1>
+          <div className="story-heading-line">
+            <h1>{story.title}</h1>
+            <span className={`difficulty ${story.difficulty}`}>
+              {difficultyText[story.difficulty]}
+            </span>
+          </div>
         </div>
-        <span className={`difficulty ${story.difficulty}`}>
-          {difficultyText[story.difficulty]}
-        </span>
       </section>
 
       <section className="surface-band">
@@ -773,41 +1160,189 @@ function StoryPage({
             </div>
             {/* <p>先从关键线索入手，再逐步缩小范围。</p> */}
           </div>
-          <div className="mode-controls">
-            <ModelPicker
-              selectedModel={selectedModel}
-              onSelectedModelChange={onSelectedModelChange}
-            />
-            <label className="switch">
-              <input
-                checked={hintEnabled}
-                disabled={isLoading}
-                type="checkbox"
-                onChange={(event) => setHintEnabled(event.target.checked)}
-              />
-              <span>提示模式</span>
-            </label>
-            <label className="switch">
-              <input
-                checked={revealMode}
-                disabled={isLoading}
-                type="checkbox"
-                onChange={(event) => setRevealMode(event.target.checked)}
-              />
-              <span>揭晓模式</span>
-            </label>
+          <div className="settings-popover" ref={settingsRef}>
+            <button
+              aria-expanded={isSettingsOpen}
+              aria-haspopup="dialog"
+              className={
+                isSettingsOpen ? 'settings-button active' : 'settings-button'
+              }
+              type="button"
+              onClick={() => setIsSettingsOpen((current) => !current)}
+            >
+              <Settings size={18} />
+              设置
+            </button>
+            {isSettingsOpen ? (
+              <div
+                aria-label="问答设置"
+                className="settings-panel"
+                role="dialog"
+              >
+                <ModelPicker
+                  selectedModel={selectedModel}
+                  onSelectedModelChange={onSelectedModelChange}
+                />
+                <ApiUnlockControl
+                  isUnlocked={isApiUnlocked}
+                  onLocked={() => setIsApiUnlocked(false)}
+                  onUnlocked={() => {
+                    setIsApiUnlocked(true)
+                    setError('')
+                  }}
+                />
+                <label className="switch">
+                  <input
+                    checked={hintEnabled}
+                    disabled={isLoading}
+                    type="checkbox"
+                    onChange={(event) => setHintEnabled(event.target.checked)}
+                  />
+                  <span>提示模式</span>
+                </label>
+                <label className="switch">
+                  <input
+                    checked={revealMode}
+                    disabled={isLoading}
+                    type="checkbox"
+                    onChange={(event) => setRevealMode(event.target.checked)}
+                  />
+                  <span>揭晓模式</span>
+                </label>
+                <label className="switch">
+                  <input
+                    checked={showGuideMessage}
+                    type="checkbox"
+                    onChange={(event) =>
+                      setShowGuideMessage(event.target.checked)
+                    }
+                  />
+                  <span>显示玩法说明</span>
+                </label>
+                <label className="switch">
+                  <input
+                    checked={soundEnabled}
+                    type="checkbox"
+                    onChange={(event) => setSoundEnabled(event.target.checked)}
+                  />
+                  <span>音效</span>
+                </label>
+              </div>
+            ) : null}
           </div>
         </div>
 
-        <div className="chat-list" aria-live="polite">
-          {entries.length === 0 ? (
-            <div className="empty-chat">
-              <Sparkles size={22} />
-              <p>先问一个能用“是 / 不是 / 是也不是 / 无关”回答的问题。</p>
-            </div>
-          ) : (
-            entries.map((entry) => <ChatBubble entry={entry} key={entry.id} />)
-          )}
+        <div className="chat-list-shell">
+          <div
+            className="chat-list"
+            aria-live="polite"
+            ref={chatListRef}
+            onScroll={updateScrollLatestButton}
+          >
+            {showGuideMessage ? (
+              <article className="guide-message">
+                <div>
+                  <span>玩法说明</span>
+                  <div className="guide-message-copy">
+                    <p>
+                      右上角设置可切换
+                      模型和游玩模式
+                    </p>
+                    <p>
+                      <strong>提示模式：</strong>回答会附带
+                      方向提示
+                    </p>
+                    <p>
+                      <strong>揭晓模式：</strong>用于提交
+                      完整真相
+                    </p>
+                    <p>
+                      <strong>提示：</strong>可查看提示，消耗提问次数
+                    </p>
+                  </div>
+                </div>
+                <button
+                  aria-label="关闭玩法说明"
+                  className="guide-message-action guide-message-close"
+                  type="button"
+                  onClick={() => setShowGuideMessage(false)}
+                >
+                  <X size={16} />
+                </button>
+              </article>
+            ) : null}
+            {showHintUnlockGuide ? (
+              <article className="guide-message hint-unlock-guide">
+                <div>
+                  <span>提示已解锁</span>
+                  <div className="guide-message-copy">
+                    <p>
+                      你已经抓住关键线索，可以在设置里开启
+                      <strong>揭晓模式</strong>
+                      ，说出完整答案。
+                    </p>
+                  </div>
+                </div>
+                <div className="guide-message-actions">
+                  <button
+                    aria-label="打开揭晓模式"
+                    aria-pressed={revealMode}
+                    className="guide-message-action guide-message-confirm"
+                    disabled={isLoading}
+                    title="打开揭晓模式"
+                    type="button"
+                    onClick={openRevealModeFromGuide}
+                  >
+                    <CheckCircle2 size={16} />
+                  </button>
+                  <button
+                    aria-label="关闭提示解锁提醒"
+                    className="guide-message-action guide-message-close"
+                    type="button"
+                    onClick={() => setShowHintUnlockGuide(false)}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </article>
+            ) : null}
+            {showRevealModeToast ? (
+              <div
+                aria-live="polite"
+                className="mode-toast"
+                key={revealModeToastKey}
+                role="status"
+              >
+                <CheckCircle2 size={16} />
+                已打开揭晓模式
+              </div>
+            ) : null}
+            {entries.length === 0 ? (
+              <div className="empty-chat">
+                <Sparkles size={22} />
+                <p>先问一个能用“是 / 不是 / 是也不是 / 无关”回答的问题。</p>
+              </div>
+            ) : (
+              entries.map((entry, index) => (
+                <ChatBubble
+                  entry={entry}
+                  entryIndex={index}
+                  key={entry.id}
+                />
+              ))
+            )}
+          </div>
+          {showScrollLatestButton && !isReturningToLatest ? (
+            <button
+              aria-label="返回最新聊天历史"
+              className="scroll-latest-button"
+              type="button"
+              onClick={() => scrollToLatestChat('smooth')}
+            >
+              <ArrowDown size={16} />
+              最新
+            </button>
+          ) : null}
         </div>
 
         {hintItems.length > 0 ? (
@@ -824,22 +1359,35 @@ function StoryPage({
         ) : null}
 
         <form className="ask-form" onSubmit={handleSubmit}>
-          <textarea
-            aria-label="输入你的问题"
-            disabled={isLoading}
-            maxLength={160}
-            onChange={(event) => setQuestion(event.target.value)}
-            onKeyDown={handleQuestionKeyDown}
-            placeholder={
-              revealMode
-                ? '输入你还原出的完整真相'
-                : '例如：这个男人认识死者吗？'
+          <div
+            className={
+              hintItems.length > 0
+                ? 'ask-input-shell has-unlock-progress'
+                : 'ask-input-shell'
             }
-            ref={questionInputRef}
-            rows={1}
-            value={question}
-          />
-          <button disabled={isLoading} type="submit">
+          >
+            <textarea
+              aria-label="输入你的问题"
+              disabled={isLoading || !canUseAi}
+              maxLength={160}
+              onChange={(event) => setQuestion(event.target.value)}
+              onKeyDown={handleQuestionKeyDown}
+              placeholder={
+                !canUseAi
+                  ? '先在设置里输入凯撒偏移量解锁 API'
+                  : revealMode
+                  ? '输入你还原出的完整真相'
+                  : '例如：这个男人认识死者吗？'
+              }
+              ref={questionInputRef}
+              rows={1}
+              value={question}
+            />
+            {hintItems.length > 0 ? (
+              <UnlockProgressBar percent={unlockProgressPercent} />
+            ) : null}
+          </div>
+          <button disabled={isLoading || !canUseAi} type="submit">
             {isLoading ? (
               <RefreshCw className="spin" size={18} />
             ) : (
@@ -872,26 +1420,48 @@ function StoryPage({
 
       {showTruth ? <SourcePanel source={story.source} /> : null}
 
-      <button
-        className="reset-button"
-        type="button"
-        onClick={() => {
-          clearStoryProgress(story.id)
-          setEntries([])
-          setShowTruth(false)
-          setRevealedHintIndexes([])
-          setHasAcceptedLimitOverrun(false)
-          setTruthDialogMode(null)
-          setPendingHintIndex(null)
-          setIsHintTrayOpen(false)
-          setHintEnabled(false)
-          setRevealMode(false)
-          setError('')
-        }}
-      >
-        <RefreshCw size={18} />
-        重新开始当前题目
-      </button>
+      <div className="story-action-row">
+        <button
+          className="reset-button"
+          type="button"
+          onClick={() => {
+            clearStoryProgress(story.id)
+            setEntries([])
+            setShowTruth(false)
+            setRevealedHintIndexes([])
+            setChargedHintIndexes([])
+            setHasSeenHintUnlockGuide(false)
+            setShowHintUnlockGuide(false)
+            setHasAcceptedLimitOverrun(false)
+            setTruthDialogMode(null)
+            setPendingHintIndex(null)
+            setIsHintTrayOpen(false)
+            setHintEnabled(true)
+            setRevealMode(false)
+            setError('')
+            setIsApiUnlocked(hasUnlockedApiAccess())
+          }}
+        >
+          <RefreshCw size={18} />
+          重新开始
+        </button>
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={openRandomStory}
+        >
+          <Shuffle size={18} />
+          随机一题
+        </button>
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={openNextStory}
+        >
+          <ArrowRight size={18} />
+          下一题
+        </button>
+      </div>
 
       <SiteFooter />
       {truthDialogMode ? (
@@ -1106,9 +1676,91 @@ function ModelPicker({
   )
 }
 
-function ChatBubble({ entry }: { entry: ChatEntry }) {
+function ApiUnlockControl({
+  isUnlocked,
+  onLocked,
+  onUnlocked,
+}: {
+  isUnlocked: boolean
+  onLocked: () => void
+  onUnlocked: () => void
+}) {
+  const [shift, setShift] = useState('')
+  const [message, setMessage] = useState('')
+  const isConfigured = hasConfiguredEncryptedApiKey()
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const result = unlockApiAccess(shift)
+
+    if (!result.ok) {
+      setMessage(result.message)
+      return
+    }
+
+    setShift('')
+    setMessage('已解锁')
+    onUnlocked()
+    window.dispatchEvent(new Event(API_UNLOCKED_STORAGE_EVENT))
+  }
+
+  function handleClearUnlock() {
+    clearSavedApiShift()
+    setMessage('已锁定')
+    onLocked()
+    window.dispatchEvent(new Event(API_UNLOCKED_STORAGE_EVENT))
+  }
+
   return (
-    <article className="chat-entry">
+    <form className="api-unlock-control" onSubmit={handleSubmit}>
+      <div
+        className={
+          isUnlocked ? 'api-unlock-status unlocked' : 'api-unlock-status'
+        }
+      >
+        {isUnlocked ? <ShieldCheck size={17} /> : <ShieldQuestion size={17} />}
+        <span>{isUnlocked ? 'API 已解锁' : 'API 未解锁'}</span>
+      </div>
+      <div className="api-unlock-row">
+        <input
+          aria-label="凯撒偏移量"
+          disabled={!isConfigured}
+          inputMode="numeric"
+          placeholder="凯撒偏移量"
+          type="number"
+          value={shift}
+          onChange={(event) => setShift(event.target.value)}
+        />
+        <button disabled={!isConfigured} type="submit">
+          解锁
+        </button>
+      </div>
+      {isUnlocked ? (
+        <button
+          className="api-unlock-link"
+          type="button"
+          onClick={handleClearUnlock}
+        >
+          重新锁定
+        </button>
+      ) : null}
+      {message ? <p className="api-unlock-message">{message}</p> : null}
+    </form>
+  )
+}
+
+function ChatBubble({
+  entry,
+  entryIndex = 0,
+}: {
+  entry: ChatEntry
+  entryIndex?: number
+}) {
+  return (
+    <article
+      className="chat-entry"
+      style={{ '--entry-index': entryIndex } as CSSProperties}
+    >
       <div className="question-bubble">
         <span>你问</span>
         <p>{entry.question}</p>
@@ -1146,7 +1798,10 @@ function HintShelf({
   return (
     <div className="hint-shelf" aria-label="提示栏">
       <div className="hint-meter">
-        <span>提问额度</span>
+        <span>
+          <CircleHelp size={15} />
+          提问额度
+        </span>
         <strong>
           {used}/{limit}
         </strong>
@@ -1165,6 +1820,7 @@ function HintShelf({
       <div className="hint-strip">
         {hints.map((hint, index) => {
           const isRevealed = revealedIndexes.includes(index)
+          const hintText = hint.replace(/[。．.]/g, '')
 
           return (
             <button
@@ -1179,11 +1835,30 @@ function HintShelf({
                 <Lightbulb size={15} />
                 提示 {index + 1}
               </span>
-              {isRevealed ? <strong>{hint}</strong> : null}
+              {isRevealed ? <strong>{hintText}</strong> : null}
             </button>
           )
         })}
       </div>
+    </div>
+  )
+}
+
+function UnlockProgressBar({ percent }: { percent: number }) {
+  return (
+    <div
+      aria-label={`提示解锁进度 ${percent}%`}
+      aria-valuemax={100}
+      aria-valuemin={0}
+      aria-valuenow={percent}
+      className="unlock-progress"
+      role="progressbar"
+    >
+      <span
+        aria-hidden="true"
+        className="unlock-progress-track"
+        style={{ '--unlock-progress': percent + '%' } as CSSProperties}
+      />
     </div>
   )
 }
@@ -1518,6 +2193,9 @@ function loadSelectedModel(): AiModelId {
 
   try {
     const raw = window.localStorage.getItem(MODEL_STORAGE_KEY)
+    if (raw === 'agnes-2.0-flash') {
+      return DEFAULT_AI_MODEL
+    }
     return isAiModelId(raw) ? raw : DEFAULT_AI_MODEL
   } catch {
     return DEFAULT_AI_MODEL
@@ -1536,20 +2214,224 @@ function saveSelectedModel(model: AiModelId) {
   }
 }
 
+function loadGuideMessagePreference() {
+  if (typeof window === 'undefined') {
+    return true
+  }
+
+  try {
+    return window.localStorage.getItem(GUIDE_MESSAGE_STORAGE_KEY) !== 'hidden'
+  } catch {
+    return true
+  }
+}
+
+function saveGuideMessagePreference(isVisible: boolean) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(
+      GUIDE_MESSAGE_STORAGE_KEY,
+      isVisible ? 'visible' : 'hidden',
+    )
+  } catch {
+    // The in-memory preference still applies for this session.
+  }
+}
+
+function loadSoundPreference() {
+  if (typeof window === 'undefined') {
+    return true
+  }
+
+  try {
+    return window.localStorage.getItem(SOUND_ENABLED_STORAGE_KEY) !== 'muted'
+  } catch {
+    return true
+  }
+}
+
+function saveSoundPreference(isEnabled: boolean) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(
+      SOUND_ENABLED_STORAGE_KEY,
+      isEnabled ? 'enabled' : 'muted',
+    )
+  } catch {
+    // The in-memory preference still applies for this session.
+  }
+}
+
+type UiSound = 'send' | 'reply' | 'celebrate'
+type AudioWindow = Window &
+  typeof globalThis & {
+    turtleSoupAudioContext?: AudioContext
+    webkitAudioContext?: typeof AudioContext
+  }
+
+function playUiSound(sound: UiSound, isEnabled: boolean) {
+  if (!isEnabled || typeof window === 'undefined') {
+    return
+  }
+
+  const audioWindow = window as AudioWindow
+  const AudioContextCtor =
+    audioWindow.AudioContext ?? audioWindow.webkitAudioContext
+
+  if (!AudioContextCtor) {
+    return
+  }
+
+  try {
+    const context = getUiAudioContext(AudioContextCtor)
+    const now = context.currentTime
+
+    if (sound === 'send') {
+      playTone(context, {
+        frequency: 560,
+        startTime: now,
+        duration: 0.09,
+        gain: 0.048,
+        type: 'triangle',
+      })
+      playTone(context, {
+        frequency: 840,
+        startTime: now + 0.045,
+        duration: 0.11,
+        gain: 0.036,
+        type: 'sine',
+      })
+      return
+    }
+
+    if (sound === 'reply') {
+      playTone(context, {
+        frequency: 740,
+        startTime: now,
+        duration: 0.12,
+        gain: 0.039,
+        type: 'sine',
+      })
+      playTone(context, {
+        frequency: 990,
+        startTime: now + 0.075,
+        duration: 0.16,
+        gain: 0.03,
+        type: 'triangle',
+      })
+      return
+    }
+
+    playTone(context, {
+      frequency: 740,
+      startTime: now,
+      duration: 0.14,
+      gain: 0.051,
+      type: 'sine',
+    })
+    playTone(context, {
+      frequency: 980,
+      startTime: now + 0.09,
+      duration: 0.17,
+      gain: 0.045,
+      type: 'triangle',
+    })
+    playTone(context, {
+      frequency: 1318,
+      startTime: now + 0.19,
+      duration: 0.22,
+      gain: 0.039,
+      type: 'triangle',
+    })
+  } catch {
+    // Audio feedback is decorative; never block the game flow.
+  }
+}
+
+function getUiAudioContext(
+  AudioContextCtor: typeof AudioContext,
+): AudioContext {
+  const audioWindow = window as AudioWindow
+
+  if (!audioWindow.turtleSoupAudioContext) {
+    audioWindow.turtleSoupAudioContext = new AudioContextCtor()
+  }
+
+  const context = audioWindow.turtleSoupAudioContext
+
+  if (context.state === 'suspended') {
+    void context.resume()
+  }
+
+  return context
+}
+
+function playTone(
+  context: AudioContext,
+  {
+    duration,
+    frequency,
+    gain,
+    startTime,
+    type,
+  }: {
+    duration: number
+    frequency: number
+    gain: number
+    startTime: number
+    type: OscillatorType
+  },
+) {
+  const oscillator = context.createOscillator()
+  const envelope = context.createGain()
+  const filter = context.createBiquadFilter()
+
+  oscillator.type = type
+  oscillator.frequency.setValueAtTime(frequency, startTime)
+  oscillator.frequency.exponentialRampToValueAtTime(
+    frequency * 1.08,
+    startTime + duration,
+  )
+  filter.type = 'lowpass'
+  filter.frequency.setValueAtTime(2400, startTime)
+  envelope.gain.setValueAtTime(0.0001, startTime)
+  envelope.gain.exponentialRampToValueAtTime(gain, startTime + 0.015)
+  envelope.gain.exponentialRampToValueAtTime(
+    0.0001,
+    startTime + duration,
+  )
+
+  oscillator.connect(filter)
+  filter.connect(envelope)
+  envelope.connect(context.destination)
+  oscillator.start(startTime)
+  oscillator.stop(startTime + duration + 0.03)
+}
+
 function isAiModelId(value: string | null): value is AiModelId {
   return modelOptions.some((option) => option.id === value)
 }
 
 function loadStoryProgress(storyId: string): {
+  chargedHintIndexes: number[]
   entries: ChatEntry[]
   hasAcceptedLimitOverrun: boolean
+  hasSeenHintUnlockGuide: boolean
   revealedHintIndexes: number[]
   showTruth: boolean
 } {
   if (typeof window === 'undefined') {
     return {
+      chargedHintIndexes: [],
       entries: [],
       hasAcceptedLimitOverrun: false,
+      hasSeenHintUnlockGuide: false,
       revealedHintIndexes: [],
       showTruth: false,
     }
@@ -1559,33 +2441,46 @@ function loadStoryProgress(storyId: string): {
     const raw = window.localStorage.getItem(getStoryProgressStorageKey(storyId))
     if (!raw) {
       return {
+        chargedHintIndexes: [],
         entries: [],
         hasAcceptedLimitOverrun: false,
+        hasSeenHintUnlockGuide: false,
         revealedHintIndexes: [],
         showTruth: false,
       }
     }
 
     const parsed = JSON.parse(raw) as Partial<{
+      chargedHintIndexes: unknown
       entries: unknown
       hasAcceptedLimitOverrun: unknown
+      hasSeenHintUnlockGuide: unknown
       revealedHintIndexes: unknown
       showTruth: unknown
     }>
+    const revealedHintIndexes = Array.isArray(parsed.revealedHintIndexes)
+      ? parsed.revealedHintIndexes.filter(isHintIndex)
+      : []
+    const chargedHintIndexes = Array.isArray(parsed.chargedHintIndexes)
+      ? parsed.chargedHintIndexes.filter(isHintIndex)
+      : revealedHintIndexes
+
     return {
+      chargedHintIndexes,
       entries: Array.isArray(parsed.entries)
         ? parsed.entries.filter(isChatEntry)
         : [],
       hasAcceptedLimitOverrun: parsed.hasAcceptedLimitOverrun === true,
-      revealedHintIndexes: Array.isArray(parsed.revealedHintIndexes)
-        ? parsed.revealedHintIndexes.filter(isHintIndex)
-        : [],
+      hasSeenHintUnlockGuide: parsed.hasSeenHintUnlockGuide === true,
+      revealedHintIndexes,
       showTruth: parsed.showTruth === true,
     }
   } catch {
     return {
+      chargedHintIndexes: [],
       entries: [],
       hasAcceptedLimitOverrun: false,
+      hasSeenHintUnlockGuide: false,
       revealedHintIndexes: [],
       showTruth: false,
     }
@@ -1599,8 +2494,10 @@ function isStoryCompleted(storyId: string) {
 function saveStoryProgress(
   storyId: string,
   progress: {
+    chargedHintIndexes: number[]
     entries: ChatEntry[]
     hasAcceptedLimitOverrun: boolean
+    hasSeenHintUnlockGuide: boolean
     revealedHintIndexes: number[]
     showTruth: boolean
   },
@@ -1613,9 +2510,11 @@ function saveStoryProgress(
     window.localStorage.setItem(
       getStoryProgressStorageKey(storyId),
       JSON.stringify({
-        version: 2,
+        version: 3,
+        chargedHintIndexes: progress.chargedHintIndexes,
         entries: progress.entries,
         hasAcceptedLimitOverrun: progress.hasAcceptedLimitOverrun,
+        hasSeenHintUnlockGuide: progress.hasSeenHintUnlockGuide,
         revealedHintIndexes: progress.revealedHintIndexes,
         showTruth: progress.showTruth,
         updatedAt: new Date().toISOString(),

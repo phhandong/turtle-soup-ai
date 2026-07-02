@@ -34,7 +34,12 @@ jobs:
         run: npm run build
         env:
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
-          VITE_AI_API_URL: ${{ vars.VITE_AI_API_URL }}
+          VITE_AI_API_BASE_URL: ${{ vars.VITE_AI_API_BASE_URL }}
+          VITE_ENCRYPTED_API_KEY: ${{ vars.VITE_ENCRYPTED_API_KEY }}
+          VITE_ENCRYPTED_API_KEYS: ${{ vars.VITE_ENCRYPTED_API_KEYS }}
+          VITE_ENCRYPTED_AGNES_API_KEY: ${{ vars.VITE_ENCRYPTED_AGNES_API_KEY }}
+          VITE_ENCRYPTED_DEEPSEEK_API_KEY: ${{ vars.VITE_ENCRYPTED_DEEPSEEK_API_KEY }}
+          VITE_ENCRYPTED_UNITY_API_KEY: ${{ vars.VITE_ENCRYPTED_UNITY_API_KEY }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
