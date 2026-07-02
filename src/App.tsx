@@ -627,6 +627,8 @@ function StoryPage({
   const [showGuideMessage, setShowGuideMessage] = useState(
     loadGuideMessagePreference,
   )
+  const [showRevealModeToast, setShowRevealModeToast] = useState(false)
+  const [revealModeToastKey, setRevealModeToastKey] = useState(0)
   const [soundEnabled, setSoundEnabled] = useState(loadSoundPreference)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
@@ -668,8 +670,36 @@ function StoryPage({
   }, [question])
 
   useEffect(() => {
+    if (!showTruth || hintItems.length === 0) {
+      return
+    }
+
+    const allHintIndexes = hintItems.map((_, index) => index)
+    if (allHintIndexes.every((index) => revealedHintIndexes.includes(index))) {
+      return
+    }
+
+    setRevealedHintIndexes((current) =>
+      mergeHintIndexes(current, allHintIndexes, hintItems.length),
+    )
+    setIsHintTrayOpen(true)
+  }, [hintItems, revealedHintIndexes, showTruth])
+
+  useEffect(() => {
     saveGuideMessagePreference(showGuideMessage)
   }, [showGuideMessage])
+
+  useEffect(() => {
+    if (!showRevealModeToast) {
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setShowRevealModeToast(false)
+    }, 1900)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [showRevealModeToast, revealModeToastKey])
 
   useEffect(() => {
     saveSoundPreference(soundEnabled)
@@ -913,6 +943,17 @@ function StoryPage({
     setShowHintUnlockGuide(true)
   }
 
+  function openRevealModeFromGuide() {
+    if (isLoading) {
+      return
+    }
+
+    setRevealMode(true)
+    setShowHintUnlockGuide(false)
+    setRevealModeToastKey((current) => current + 1)
+    setShowRevealModeToast(true)
+  }
+
   async function copyLink() {
     await navigator.clipboard.writeText(window.location.href)
   }
@@ -1067,6 +1108,7 @@ function StoryPage({
               </div>
               <button
                 aria-label="关闭玩法说明"
+                className="guide-message-action guide-message-close"
                 type="button"
                 onClick={() => setShowGuideMessage(false)}
               >
@@ -1079,17 +1121,46 @@ function StoryPage({
               <div>
                 <span>提示已解锁</span>
                 <div className="guide-message-copy">
-                  <p>你已经抓住关键线索，可以在设置里开启揭晓模式，说出完整答案。</p>
+                  <p>
+                    你已经抓住关键线索，可以在设置里开启
+                    <strong>揭晓模式</strong>
+                    ，说出完整答案。
+                  </p>
                 </div>
               </div>
-              <button
-                aria-label="关闭提示解锁提醒"
-                type="button"
-                onClick={() => setShowHintUnlockGuide(false)}
-              >
-                <X size={16} />
-              </button>
+              <div className="guide-message-actions">
+                <button
+                  aria-label="打开揭晓模式"
+                  aria-pressed={revealMode}
+                  className="guide-message-action guide-message-confirm"
+                  disabled={isLoading}
+                  title="打开揭晓模式"
+                  type="button"
+                  onClick={openRevealModeFromGuide}
+                >
+                  <CheckCircle2 size={16} />
+                </button>
+                <button
+                  aria-label="关闭提示解锁提醒"
+                  className="guide-message-action guide-message-close"
+                  type="button"
+                  onClick={() => setShowHintUnlockGuide(false)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
             </article>
+          ) : null}
+          {showRevealModeToast ? (
+            <div
+              aria-live="polite"
+              className="mode-toast"
+              key={revealModeToastKey}
+              role="status"
+            >
+              <CheckCircle2 size={16} />
+              已打开揭晓模式
+            </div>
           ) : null}
           {entries.length === 0 ? (
             <div className="empty-chat">
@@ -1121,21 +1192,27 @@ function StoryPage({
         ) : null}
 
         <form className="ask-form" onSubmit={handleSubmit}>
-          <div className="ask-input-shell">
-            <textarea
-            aria-label="输入你的问题"
-            disabled={isLoading}
-            maxLength={160}
-            onChange={(event) => setQuestion(event.target.value)}
-            onKeyDown={handleQuestionKeyDown}
-            placeholder={
-              revealMode
-                ? '输入你还原出的完整真相'
-                : '例如：这个男人认识死者吗？'
+          <div
+            className={
+              hintItems.length > 0
+                ? 'ask-input-shell has-unlock-progress'
+                : 'ask-input-shell'
             }
-            ref={questionInputRef}
-            rows={1}
-            value={question}
+          >
+            <textarea
+              aria-label="输入你的问题"
+              disabled={isLoading}
+              maxLength={160}
+              onChange={(event) => setQuestion(event.target.value)}
+              onKeyDown={handleQuestionKeyDown}
+              placeholder={
+                revealMode
+                  ? '输入你还原出的完整真相'
+                  : '例如：这个男人认识死者吗？'
+              }
+              ref={questionInputRef}
+              rows={1}
+              value={question}
             />
             {hintItems.length > 0 ? (
               <UnlockProgressBar percent={unlockProgressPercent} />
@@ -1528,14 +1605,17 @@ function UnlockProgressBar({ percent }: { percent: number }) {
   return (
     <div
       aria-label={`提示解锁进度 ${percent}%`}
+      aria-valuemax={100}
+      aria-valuemin={0}
+      aria-valuenow={percent}
       className="unlock-progress"
+      role="progressbar"
     >
       <span
         aria-hidden="true"
         className="unlock-progress-track"
         style={{ '--unlock-progress': percent + '%' } as CSSProperties}
       />
-      <strong>{percent}%</strong>
     </div>
   )
 }
@@ -1974,14 +2054,14 @@ function playUiSound(sound: UiSound, isEnabled: boolean) {
         frequency: 560,
         startTime: now,
         duration: 0.09,
-        gain: 0.032,
+        gain: 0.048,
         type: 'triangle',
       })
       playTone(context, {
         frequency: 840,
         startTime: now + 0.045,
         duration: 0.11,
-        gain: 0.024,
+        gain: 0.036,
         type: 'sine',
       })
       return
@@ -1992,14 +2072,14 @@ function playUiSound(sound: UiSound, isEnabled: boolean) {
         frequency: 740,
         startTime: now,
         duration: 0.12,
-        gain: 0.026,
+        gain: 0.039,
         type: 'sine',
       })
       playTone(context, {
         frequency: 990,
         startTime: now + 0.075,
         duration: 0.16,
-        gain: 0.02,
+        gain: 0.03,
         type: 'triangle',
       })
       return
@@ -2009,21 +2089,21 @@ function playUiSound(sound: UiSound, isEnabled: boolean) {
       frequency: 740,
       startTime: now,
       duration: 0.14,
-      gain: 0.034,
+      gain: 0.051,
       type: 'sine',
     })
     playTone(context, {
       frequency: 980,
       startTime: now + 0.09,
       duration: 0.17,
-      gain: 0.03,
+      gain: 0.045,
       type: 'triangle',
     })
     playTone(context, {
       frequency: 1318,
       startTime: now + 0.19,
       duration: 0.22,
-      gain: 0.026,
+      gain: 0.039,
       type: 'triangle',
     })
   } catch {
