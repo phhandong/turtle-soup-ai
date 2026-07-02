@@ -292,29 +292,7 @@ function normalizeBase64(value: string) {
 }
 
 function scoreApiKeyCandidate(value: string) {
-  if (value.length < 8 || /[\s\u0000-\u001f\u007f]/.test(value)) {
-    return 0
-  }
-
-  let score = 1
-
-  if (value.length >= 16) {
-    score += 1
-  }
-
-  if (/^sk[-_]/i.test(value)) {
-    score += 5
-  }
-
-  if (/^[A-Za-z0-9._:+/-]+$/.test(value)) {
-    score += 1
-  }
-
-  if (/[A-Za-z]/.test(value) && /\d/.test(value)) {
-    score += 1
-  }
-
-  return score
+  return /^sk/i.test(value) ? 3 : 0
 }
 
 function mod(value: number, modulus: number) {
