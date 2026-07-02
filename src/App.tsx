@@ -2,6 +2,7 @@ import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
+  ArrowDown,
   ChevronDown,
   CheckCircle2,
   CircleHelp,
@@ -601,7 +602,7 @@ function StoryPage({
   const [entries, setEntries] = useState<ChatEntry[]>(
     () => initialProgress.entries,
   )
-  const [hintEnabled, setHintEnabled] = useState(false)
+  const [hintEnabled, setHintEnabled] = useState(true)
   const [revealedHintIndexes, setRevealedHintIndexes] = useState<number[]>(
     () => initialProgress.revealedHintIndexes,
   )
@@ -632,7 +633,13 @@ function StoryPage({
   const [soundEnabled, setSoundEnabled] = useState(loadSoundPreference)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
+  const [showScrollLatestButton, setShowScrollLatestButton] = useState(false)
+  const [isReturningToLatest, setIsReturningToLatest] = useState(false)
+  const chatListRef = useRef<HTMLDivElement>(null)
   const questionInputRef = useRef<HTMLTextAreaElement>(null)
+  const isProgrammaticChatScrollRef = useRef(false)
+  const programmaticChatScrollTimeoutRef = useRef<number | null>(null)
+  const previousEntryCountRef = useRef(entries.length)
   const settingsRef = useRef<HTMLDivElement>(null)
   const hintSettings = story.hints ?? defaultHintSettings[story.difficulty]
   const hintItems = story.hints?.items ?? []
@@ -668,6 +675,38 @@ function StoryPage({
   useEffect(() => {
     resizeQuestionInput()
   }, [question])
+
+  useEffect(() => {
+    return () => {
+      if (programmaticChatScrollTimeoutRef.current !== null) {
+        window.clearTimeout(programmaticChatScrollTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    const previousEntryCount = previousEntryCountRef.current
+    previousEntryCountRef.current = entries.length
+
+    if (entries.length === 0) {
+      setShowScrollLatestButton(false)
+      return
+    }
+
+    let nextFrameId = 0
+    const frameId = window.requestAnimationFrame(() => {
+      nextFrameId = window.requestAnimationFrame(() => {
+        scrollToLatestChat(
+          entries.length > previousEntryCount ? 'smooth' : 'auto',
+        )
+      })
+    })
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      window.cancelAnimationFrame(nextFrameId)
+    }
+  }, [entries.length])
 
   useEffect(() => {
     if (!showTruth || hintItems.length === 0) {
@@ -821,6 +860,64 @@ function StoryPage({
         : 'hidden'
   }
 
+  function isChatScrolledToLatest() {
+    const list = chatListRef.current
+
+    if (!list) {
+      return true
+    }
+
+    return list.scrollHeight - list.scrollTop - list.clientHeight < 36
+  }
+
+  function updateScrollLatestButton() {
+    if (isProgrammaticChatScrollRef.current) {
+      if (isChatScrolledToLatest()) {
+        isProgrammaticChatScrollRef.current = false
+        setIsReturningToLatest(false)
+      } else {
+        setShowScrollLatestButton(false)
+        return
+      }
+    }
+
+    setShowScrollLatestButton(!isChatScrolledToLatest())
+  }
+
+  function scrollToLatestChat(behavior: ScrollBehavior = 'smooth') {
+    const list = chatListRef.current
+
+    if (!list) {
+      return
+    }
+
+    isProgrammaticChatScrollRef.current = true
+    setIsReturningToLatest(true)
+    if (programmaticChatScrollTimeoutRef.current !== null) {
+      window.clearTimeout(programmaticChatScrollTimeoutRef.current)
+    }
+    setShowScrollLatestButton(false)
+
+    list.scrollTo({
+      top: list.scrollHeight,
+      behavior,
+    })
+
+    programmaticChatScrollTimeoutRef.current = window.setTimeout(() => {
+      isProgrammaticChatScrollRef.current = false
+      setIsReturningToLatest(false)
+      updateScrollLatestButton()
+    }, behavior === 'smooth' ? 520 : 0)
+  }
+
+  function focusQuestionInput() {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        questionInputRef.current?.focus()
+      })
+    })
+  }
+
   function handleQuestionKeyDown(
     event: React.KeyboardEvent<HTMLTextAreaElement>,
   ) {
@@ -852,6 +949,7 @@ function StoryPage({
     setIsLoading(true)
     setError('')
     playUiSound('send', soundEnabled)
+    let shouldFocusAfterReply = false
 
     try {
       const hintCandidates = hintItems
@@ -906,12 +1004,17 @@ function StoryPage({
           hintSettings.questionLimit
       ) {
         setTruthDialogMode('limit')
+      } else {
+        shouldFocusAfterReply = true
       }
     } catch (error) {
       console.error('AI request failed', error)
       setError('暂时没有回应，请稍后再试。')
     } finally {
       setIsLoading(false)
+      if (shouldFocusAfterReply) {
+        focusQuestionInput()
+      }
     }
   }
 
@@ -1083,99 +1186,117 @@ function StoryPage({
           </div>
         </div>
 
-        <div className="chat-list" aria-live="polite">
-          {showGuideMessage ? (
-            <article className="guide-message">
-              <div>
-                <span>玩法说明</span>
-                <div className="guide-message-copy">
-                  <p>
-                    右上角设置可切换
-                    模型和游玩模式
-                  </p>
-                  <p>
-                    <strong>提示模式：</strong>回答会附带
-                    方向提示
-                  </p>
-                  <p>
-                    <strong>揭晓模式：</strong>用于提交
-                    完整真相
-                  </p>
-                  <p>
-                    <strong>提示：</strong>可查看提示，消耗提问次数
-                  </p>
+        <div className="chat-list-shell">
+          <div
+            className="chat-list"
+            aria-live="polite"
+            ref={chatListRef}
+            onScroll={updateScrollLatestButton}
+          >
+            {showGuideMessage ? (
+              <article className="guide-message">
+                <div>
+                  <span>玩法说明</span>
+                  <div className="guide-message-copy">
+                    <p>
+                      右上角设置可切换
+                      模型和游玩模式
+                    </p>
+                    <p>
+                      <strong>提示模式：</strong>回答会附带
+                      方向提示
+                    </p>
+                    <p>
+                      <strong>揭晓模式：</strong>用于提交
+                      完整真相
+                    </p>
+                    <p>
+                      <strong>提示：</strong>可查看提示，消耗提问次数
+                    </p>
+                  </div>
                 </div>
-              </div>
-              <button
-                aria-label="关闭玩法说明"
-                className="guide-message-action guide-message-close"
-                type="button"
-                onClick={() => setShowGuideMessage(false)}
-              >
-                <X size={16} />
-              </button>
-            </article>
-          ) : null}
-          {showHintUnlockGuide ? (
-            <article className="guide-message hint-unlock-guide">
-              <div>
-                <span>提示已解锁</span>
-                <div className="guide-message-copy">
-                  <p>
-                    你已经抓住关键线索，可以在设置里开启
-                    <strong>揭晓模式</strong>
-                    ，说出完整答案。
-                  </p>
-                </div>
-              </div>
-              <div className="guide-message-actions">
                 <button
-                  aria-label="打开揭晓模式"
-                  aria-pressed={revealMode}
-                  className="guide-message-action guide-message-confirm"
-                  disabled={isLoading}
-                  title="打开揭晓模式"
-                  type="button"
-                  onClick={openRevealModeFromGuide}
-                >
-                  <CheckCircle2 size={16} />
-                </button>
-                <button
-                  aria-label="关闭提示解锁提醒"
+                  aria-label="关闭玩法说明"
                   className="guide-message-action guide-message-close"
                   type="button"
-                  onClick={() => setShowHintUnlockGuide(false)}
+                  onClick={() => setShowGuideMessage(false)}
                 >
                   <X size={16} />
                 </button>
+              </article>
+            ) : null}
+            {showHintUnlockGuide ? (
+              <article className="guide-message hint-unlock-guide">
+                <div>
+                  <span>提示已解锁</span>
+                  <div className="guide-message-copy">
+                    <p>
+                      你已经抓住关键线索，可以在设置里开启
+                      <strong>揭晓模式</strong>
+                      ，说出完整答案。
+                    </p>
+                  </div>
+                </div>
+                <div className="guide-message-actions">
+                  <button
+                    aria-label="打开揭晓模式"
+                    aria-pressed={revealMode}
+                    className="guide-message-action guide-message-confirm"
+                    disabled={isLoading}
+                    title="打开揭晓模式"
+                    type="button"
+                    onClick={openRevealModeFromGuide}
+                  >
+                    <CheckCircle2 size={16} />
+                  </button>
+                  <button
+                    aria-label="关闭提示解锁提醒"
+                    className="guide-message-action guide-message-close"
+                    type="button"
+                    onClick={() => setShowHintUnlockGuide(false)}
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </article>
+            ) : null}
+            {showRevealModeToast ? (
+              <div
+                aria-live="polite"
+                className="mode-toast"
+                key={revealModeToastKey}
+                role="status"
+              >
+                <CheckCircle2 size={16} />
+                已打开揭晓模式
               </div>
-            </article>
-          ) : null}
-          {showRevealModeToast ? (
-            <div
-              aria-live="polite"
-              className="mode-toast"
-              key={revealModeToastKey}
-              role="status"
+            ) : null}
+            {entries.length === 0 ? (
+              <div className="empty-chat">
+                <Sparkles size={22} />
+                <p>先问一个能用“是 / 不是 / 是也不是 / 无关”回答的问题。</p>
+              </div>
+            ) : (
+              entries.map((entry, index) => (
+                <ChatBubble
+                  entry={entry}
+                  entryIndex={index}
+                  key={entry.id}
+                />
+              ))
+            )}
+          </div>
+          {showScrollLatestButton && !isReturningToLatest ? (
+            <button
+              aria-label="返回最新聊天历史"
+              className="scroll-latest-button"
+              type="button"
+              onClick={() => scrollToLatestChat('smooth')}
             >
-              <CheckCircle2 size={16} />
-              已打开揭晓模式
-            </div>
+              <ArrowDown size={16} />
+              最新
+            </button>
           ) : null}
-          {entries.length === 0 ? (
-            <div className="empty-chat">
-              <Sparkles size={22} />
-              <p>先问一个能用“是 / 不是 / 是也不是 / 无关”回答的问题。</p>
-            </div>
-          ) : (
-            entries.map((entry, index) => (
-              <ChatBubble
-                entry={entry}
-                entryIndex={index}
-                key={entry.id}
-              />
-            ))
-          )}
         </div>
 
         {hintItems.length > 0 ? (
@@ -1267,7 +1388,7 @@ function StoryPage({
             setTruthDialogMode(null)
             setPendingHintIndex(null)
             setIsHintTrayOpen(false)
-            setHintEnabled(false)
+            setHintEnabled(true)
             setRevealMode(false)
             setError('')
           }}

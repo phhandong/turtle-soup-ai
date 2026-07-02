@@ -1388,8 +1388,11 @@ code {
   accent-color: var(--moss);
 }
 
-.chat-list {
+.chat-list-shell {
   position: relative;
+}
+
+.chat-list {
   display: flex;
   min-height: clamp(360px, 46vh, 560px);
   max-height: 760px;
@@ -1543,6 +1546,46 @@ code {
   font-weight: 860;
   box-shadow: 0 14px 30px rgba(23, 32, 29, 0.16);
   animation: toastPop 1900ms var(--ease-out) both;
+}
+
+.scroll-latest-button {
+  position: absolute;
+  z-index: 9;
+  right: 12px;
+  bottom: 10px;
+  display: inline-flex;
+  width: fit-content;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--moss-dark);
+  border-radius: 999px;
+  padding: 0 12px;
+  background: var(--moss-dark);
+  color: #fffdf7;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 880;
+  box-shadow:
+    0 12px 24px rgba(23, 32, 29, 0.13),
+    0 0 0 2px rgba(255, 253, 247, 0.88);
+  animation: latestButtonIn 180ms var(--ease-out) both;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    transform 150ms var(--ease-out);
+}
+
+.scroll-latest-button:hover,
+.scroll-latest-button:focus-visible {
+  background: #0e4a3f;
+  color: #fffdf7;
+  transform: translateY(-1px);
+}
+
+.scroll-latest-button svg {
+  flex: 0 0 auto;
 }
 
 .chat-entry {
@@ -2416,6 +2459,17 @@ code {
   }
 }
 
+@keyframes latestButtonIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @keyframes emptyFloat {
   from {
     opacity: 0;
@@ -2767,6 +2821,7 @@ code {
     width: min(312px, calc(100vw - 44px));
   }
 
+  .chat-list-shell,
   .chat-list {
     flex: 1 1 auto;
     min-height: 0;
