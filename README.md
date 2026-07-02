@@ -77,7 +77,7 @@ VITE_ENCRYPTED_UNITY_API_KEY
 
 也可以分别设置 `VITE_ENCRYPTED_AGNES_API_KEY`、`VITE_ENCRYPTED_DEEPSEEK_API_KEY`、`VITE_ENCRYPTED_UNITY_API_KEY`。
 
-用户输入的凯撒偏移量会保存到浏览器 `localStorage`。密文生成方式是先把 API key 做 base64 编码，再只对编码结果里的英文字母做凯撒偏移；数字、`+`、`/`、`=` 不偏移。前端包里仍会包含加密后的 key，这只能作为使用门槛，不能等同于服务端密钥保护。
+用户输入的凯撒偏移量会保存到浏览器 `localStorage`。密文生成方式是先把 API key 做 base64 编码，再只对编码结果里的英文字母做凯撒偏移；数字、`+`、`/`、`=` 不偏移。解锁时只要求至少一个已配置 key 能被当前偏移量解开；发送请求时会按所选模型解对应 key。前端包里仍会包含加密后的 key，这只能作为使用门槛，不能等同于服务端密钥保护。
 
 ## API 代理
 

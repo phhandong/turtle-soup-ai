@@ -37,11 +37,11 @@ export function unlockApiAccess(rawShift: string): ApiUnlockResult {
     }
   }
 
-  const canDecryptAllKeys = encryptedKeys.every((encryptedKey) =>
+  const canDecryptAnyKey = encryptedKeys.some((encryptedKey) =>
     decodeEncryptedApiKey(encryptedKey, shift),
   )
 
-  if (!canDecryptAllKeys) {
+  if (!canDecryptAnyKey) {
     return {
       ok: false,
       message: '偏移量不正确，请检查后重试。',
@@ -61,7 +61,7 @@ export function hasUnlockedApiAccess() {
   const encryptedKeys = getConfiguredEncryptedKeys()
   return (
     encryptedKeys.length > 0 &&
-    encryptedKeys.every((encryptedKey) =>
+    encryptedKeys.some((encryptedKey) =>
       decodeEncryptedApiKey(encryptedKey, shift),
     )
   )
