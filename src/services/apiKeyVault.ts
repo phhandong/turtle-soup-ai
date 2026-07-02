@@ -1,10 +1,6 @@
 import type { AiModelId } from '../types/story'
 
 const API_SHIFT_STORAGE_KEY = 'turtle-soup-api-caesar-shift'
-const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-const BASE64_ALPHABET_WITH_PADDING = `${BASE64_ALPHABET}=`
-const PRINTABLE_ASCII_START = 32
-const PRINTABLE_ASCII_END = 126
 
 type ApiUnlockResult =
   | { ok: true; shift: number }
@@ -242,33 +238,11 @@ function decodeEncryptedApiKey(encryptedValue: string, shift: number) {
 
 function getCaesarCandidates(encrypted: string, shift: number) {
   const candidates = [
-    shiftPrintableAscii(encrypted, -shift),
-    shiftPrintableAscii(encrypted, shift),
     shiftAlphabetic(encrypted, -shift),
     shiftAlphabetic(encrypted, shift),
-    shiftBase64Alphabet(encrypted, -shift, false),
-    shiftBase64Alphabet(encrypted, shift, false),
-    shiftBase64Alphabet(encrypted, -shift, true),
-    shiftBase64Alphabet(encrypted, shift, true),
   ]
 
   return Array.from(new Set(candidates))
-}
-
-function shiftPrintableAscii(value: string, amount: number) {
-  const rangeSize = PRINTABLE_ASCII_END - PRINTABLE_ASCII_START + 1
-
-  return Array.from(value, (character) => {
-    const code = character.charCodeAt(0)
-    if (code < PRINTABLE_ASCII_START || code > PRINTABLE_ASCII_END) {
-      return character
-    }
-
-    const shifted =
-      mod(code - PRINTABLE_ASCII_START + amount, rangeSize) +
-      PRINTABLE_ASCII_START
-    return String.fromCharCode(shifted)
-  }).join('')
 }
 
 function shiftAlphabetic(value: string, amount: number) {
@@ -284,23 +258,6 @@ function shiftAlphabetic(value: string, amount: number) {
     }
 
     return character
-  }).join('')
-}
-
-function shiftBase64Alphabet(
-  value: string,
-  amount: number,
-  includePadding: boolean,
-) {
-  const alphabet = includePadding ? BASE64_ALPHABET_WITH_PADDING : BASE64_ALPHABET
-
-  return Array.from(value, (character) => {
-    const index = alphabet.indexOf(character)
-    if (index < 0) {
-      return character
-    }
-
-    return alphabet[mod(index + amount, alphabet.length)]
   }).join('')
 }
 
