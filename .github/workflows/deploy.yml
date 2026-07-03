@@ -34,7 +34,9 @@ jobs:
         run: npm run build
         env:
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
-          VITE_AI_API_BASE_URL: ${{ vars.VITE_AI_API_BASE_URL }}
+          VITE_DEEPSEEK_FC_API_URL: ${{ vars.VITE_DEEPSEEK_FC_API_URL }}
+          VITE_AGNES_API_BASE_URL: ${{ vars.VITE_AGNES_API_BASE_URL }}
+          VITE_UNITY_API_BASE_URL: ${{ vars.VITE_UNITY_API_BASE_URL }}
           VITE_ENCRYPTED_API_KEY: ${{ vars.VITE_ENCRYPTED_API_KEY }}
           VITE_ENCRYPTED_API_KEYS: ${{ vars.VITE_ENCRYPTED_API_KEYS }}
           VITE_ENCRYPTED_AGNES_API_KEY: ${{ vars.VITE_ENCRYPTED_AGNES_API_KEY }}
