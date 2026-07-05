@@ -33,7 +33,7 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_BASE_PATH: /
           VITE_DEEPSEEK_FC_API_URL: ${{ vars.VITE_DEEPSEEK_FC_API_URL }}
           VITE_AGNES_API_BASE_URL: ${{ vars.VITE_AGNES_API_BASE_URL }}
           VITE_UNITY_API_BASE_URL: ${{ vars.VITE_UNITY_API_BASE_URL }}
