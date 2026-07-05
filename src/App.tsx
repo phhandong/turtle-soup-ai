@@ -28,6 +28,7 @@ import { getCurrentStoryId, getStoryPath } from './utils/routes'
 const STORY_PROGRESS_STORAGE_PREFIX = 'turtle-soup-history:'
 const MODEL_STORAGE_KEY = 'turtle-soup-model'
 const GUIDE_MESSAGE_STORAGE_KEY = 'turtle-soup-guide-message'
+const HINT_ENABLED_STORAGE_KEY = 'turtle-soup-hint-enabled'
 const SOUND_ENABLED_STORAGE_KEY = 'turtle-soup-sound-enabled'
 const DEFAULT_AI_MODEL: AiModelId = 'deepseek-v4-flash'
 
@@ -602,7 +603,7 @@ function StoryPage({
   const [entries, setEntries] = useState<ChatEntry[]>(
     () => initialProgress.entries,
   )
-  const [hintEnabled, setHintEnabled] = useState(true)
+  const [hintEnabled, setHintEnabled] = useState(loadHintPreference)
   const [revealedHintIndexes, setRevealedHintIndexes] = useState<number[]>(
     () => initialProgress.revealedHintIndexes,
   )
@@ -791,6 +792,11 @@ function StoryPage({
     }
 
     return false
+  }
+
+  function handleHintEnabledChange(isEnabled: boolean) {
+    setHintEnabled(isEnabled)
+    saveHintPreference(isEnabled)
   }
 
   function requestRevealHint(hintIndex: number) {
@@ -1150,7 +1156,9 @@ function StoryPage({
                     checked={hintEnabled}
                     disabled={isLoading}
                     type="checkbox"
-                    onChange={(event) => setHintEnabled(event.target.checked)}
+                    onChange={(event) =>
+                      handleHintEnabledChange(event.target.checked)
+                    }
                   />
                   <span>提示模式</span>
                 </label>
@@ -2113,6 +2121,33 @@ function saveGuideMessagePreference(isVisible: boolean) {
     window.localStorage.setItem(
       GUIDE_MESSAGE_STORAGE_KEY,
       isVisible ? 'visible' : 'hidden',
+    )
+  } catch {
+    // The in-memory preference still applies for this session.
+  }
+}
+
+function loadHintPreference() {
+  if (typeof window === 'undefined') {
+    return true
+  }
+
+  try {
+    return window.localStorage.getItem(HINT_ENABLED_STORAGE_KEY) !== 'disabled'
+  } catch {
+    return true
+  }
+}
+
+function saveHintPreference(isEnabled: boolean) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(
+      HINT_ENABLED_STORAGE_KEY,
+      isEnabled ? 'enabled' : 'disabled',
     )
   } catch {
     // The in-memory preference still applies for this session.
