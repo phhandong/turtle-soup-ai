@@ -22,6 +22,7 @@ import {
   Sparkles,
   Shuffle,
 } from 'lucide-react'
+import { Analytics } from '@vercel/analytics/react'
 import { stories, getStoryById } from './data/stories'
 import { ApiKeyUnlockError, askAi } from './services/aiClient'
 import {
@@ -94,18 +95,28 @@ function App() {
   const story = storyId ? getStoryById(storyId) : undefined
 
   if (storyId && !story) {
-    return <MissingStory />
+    return (
+      <>
+        <MissingStory />
+        <Analytics />
+      </>
+    )
   }
 
-  return story ? (
-    <StoryPage
-      key={story.id}
-      onSelectedModelChange={setSelectedModel}
-      selectedModel={selectedModel}
-      story={story}
-    />
-  ) : (
-    <HomePage />
+  return (
+    <>
+      {story ? (
+        <StoryPage
+          key={story.id}
+          onSelectedModelChange={setSelectedModel}
+          selectedModel={selectedModel}
+          story={story}
+        />
+      ) : (
+        <HomePage />
+      )}
+      <Analytics />
+    </>
   )
 }
 
