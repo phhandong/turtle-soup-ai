@@ -3,6 +3,9 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { extname, join, normalize, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { handleApiRequest } from './api-core.mjs'
+import { loadLocalEnv } from './env-loader.mjs'
+
 const DEFAULT_FC_API_URL = 'https://turtle-ai-proxy-opzmtticwv.cn-wulanchabu.fcapp.run'
 const DEFAULT_PORT = 4173
 const DEFAULT_TIMEOUT_MS = 60000
@@ -13,6 +16,7 @@ const RETRYABLE_UPSTREAM_STATUSES = new Set([502, 503, 504])
 
 const rootDir = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const distDir = resolve(rootDir, 'dist')
+loadLocalEnv(rootDir)
 const fcApiUrl = trimTrailingSlash(process.env.FC_API_URL || DEFAULT_FC_API_URL)
 const port = getPositiveNumber(process.env.PORT, DEFAULT_PORT)
 const timeoutMs = getPositiveNumber(process.env.FC_TIMEOUT_MS, DEFAULT_TIMEOUT_MS)
@@ -44,8 +48,8 @@ export function createApp(options = {}) {
 async function handleRequest(request, response, config) {
   const url = new URL(request.url || '/', 'http://localhost')
 
-  if (url.pathname === '/api/ai') {
-    await proxyAiRequest(request, response, config)
+  if (url.pathname.startsWith('/api/')) {
+    await handleLocalApiRequest(request, response, config)
     return
   }
 
@@ -55,6 +59,51 @@ async function handleRequest(request, response, config) {
   }
 
   await serveStatic(request, response, config.distDir, url.pathname)
+}
+
+async function handleLocalApiRequest(request, response, config) {
+  const fetchRequest = await toFetchRequest(request)
+  const apiResponse = await handleApiRequest(fetchRequest, {
+    ...process.env,
+    FC_API_URL: config.fcApiUrl,
+    FC_MAX_ATTEMPTS: config.fcMaxAttempts,
+    FC_RETRY_DELAY_MS: config.fcRetryDelayMs,
+    FC_TIMEOUT_MS: config.timeoutMs,
+    __fetchImpl: config.fetchImpl,
+  })
+
+  response.statusCode = apiResponse.status
+  apiResponse.headers.forEach((value, name) => {
+    response.setHeader(name, value)
+  })
+  response.end(await apiResponse.text())
+}
+
+async function toFetchRequest(request) {
+  const host = request.headers.host || '127.0.0.1'
+  const protocol = request.headers['x-forwarded-proto'] || 'http'
+  const url = `${protocol}://${host}${request.url || '/'}`
+  const headers = new Headers()
+
+  for (const [name, value] of Object.entries(request.headers || {})) {
+    if (Array.isArray(value)) {
+      headers.set(name, value.join(', '))
+    } else if (value !== undefined) {
+      headers.set(name, String(value))
+    }
+  }
+
+  const method = request.method || 'GET'
+  const body =
+    method === 'GET' || method === 'HEAD'
+      ? undefined
+      : await readRequestBody(request, MAX_BODY_BYTES)
+
+  return new Request(url, {
+    method,
+    headers,
+    body,
+  })
 }
 
 async function proxyAiRequest(request, response, config) {

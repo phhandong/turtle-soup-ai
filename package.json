@@ -11,13 +11,15 @@
     "build": "tsc -b && vite build --configLoader native",
     "test:api": "node --test api-proxy/index.test.mjs",
     "test:server": "node --test server/index.test.mjs",
-    "check:api": "node --check api-proxy/index.mjs && node --check api-proxy/proxy-core.mjs && node --check server/index.mjs",
+    "test:auth": "node --test server/auth-utils.test.mjs",
+    "check:api": "node --check api-proxy/index.mjs && node --check api-proxy/proxy-core.mjs && node --check server/auth-utils.mjs && node --check server/api-core.mjs && node --check server/env-loader.mjs && node --check server/vercel-adapter.mjs && node --check server/index.mjs && node --check \"api/[...path].js\"",
     "preview": "vite preview --configLoader native",
     "deploy": "npm run build -- --base=/turtle-soup-ai/ && gh-pages -d dist",
     "start": "node server/index.mjs",
     "start:server": "node server/start-server.mjs"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
     "lucide-react": "^0.544.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"

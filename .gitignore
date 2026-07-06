@@ -10,6 +10,8 @@ api-proxy/.s
 .dev-server.*.log
 .node-server.pid
 .node-server.*.log
+.local-server.pid
+.local-server.*.log
 raw_stories/**
 .htaccess/**
 .user.ini

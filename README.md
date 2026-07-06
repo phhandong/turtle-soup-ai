@@ -43,6 +43,21 @@ npm run dev:stop
 npm run build
 ```
 
+## 用户系统与 Neon 数据库
+
+本站需要登录后才能游玩。注册时填写用户名、邮箱和密码；登录支持用户名或邮箱。用户、会话和做题记录保存在 Neon Serverless Postgres。
+
+Vercel 环境变量至少需要：
+
+```bash
+DATABASE_URL=postgres://...
+SESSION_SECRET=至少 32 位随机字符串
+FC_API_URL=https://turtle-ai-proxy-opzmtticwv.cn-wulanchabu.fcapp.run
+VITE_AI_API_URL=/api/ai
+```
+
+也可以使用 Neon 自动注入的 `POSTGRES_URL`，代码会在 `DATABASE_URL` 缺失时回退使用它。首次请求 `/api/auth/*` 或 `/api/progress` 时会自动创建 `users`、`sessions`、`story_progress` 三张表。
+
 ## 云服务器 Node 转发服务
 
 生产链路为：浏览器请求当前站点同域 `/api/ai`，Node 服务再转发到阿里云函数计算 `https://api-turtle.handong-joy.xyz`。
@@ -58,6 +73,8 @@ npm start
 $env:PORT = "4173"
 $env:FC_API_URL = "https://api-turtle.handong-joy.xyz"
 $env:FC_TIMEOUT_MS = "30000"
+$env:DATABASE_URL = "postgres://..."
+$env:SESSION_SECRET = "replace-with-at-least-32-random-characters"
 npm start
 ```
 
@@ -110,6 +127,7 @@ s deploy -y
 npm run check:api
 npm run test:api
 npm run test:server
+npm run test:auth
 npm run build
 ```
 

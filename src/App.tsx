@@ -1,4 +1,11 @@
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  type CSSProperties,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -8,20 +15,41 @@ import {
   CircleHelp,
   ExternalLink,
   Eye,
+  ImageUp,
   Lightbulb,
+  LockKeyhole,
+  LogIn,
+  LogOut,
+  Mail,
   PartyPopper,
   X,
   Home,
   Link2,
   RefreshCw,
+  Save,
   Send,
   Settings,
   SlidersHorizontal,
   Sparkles,
   Shuffle,
+  UserRound,
 } from 'lucide-react'
 import { stories, getStoryById } from './data/stories'
 import { askAi } from './services/aiClient'
+import {
+  ApiError,
+  deleteProgressRecord,
+  getCurrentUser,
+  getProgressRecords,
+  loginUser,
+  logoutUser,
+  registerUser,
+  saveProgressRecord,
+  updateProfile,
+  type AuthUser,
+  type ProgressRecord,
+  type StoryProgressData,
+} from './services/authClient'
 import type { AiModelId, ChatEntry, Difficulty, Story } from './types/story'
 import { getCurrentStoryId, getStoryPath } from './utils/routes'
 
@@ -31,6 +59,7 @@ const GUIDE_MESSAGE_STORAGE_KEY = 'turtle-soup-guide-message'
 const HINT_ENABLED_STORAGE_KEY = 'turtle-soup-hint-enabled'
 const SOUND_ENABLED_STORAGE_KEY = 'turtle-soup-sound-enabled'
 const DEFAULT_AI_MODEL: AiModelId = 'deepseek-v4-flash'
+type ProgressByStoryId = Record<string, ProgressRecord>
 
 const modelOptions: Array<{ id: AiModelId; label: string }> = [
   { id: 'agnes-2.0-flash', label: 'Agnes 2.0 Flash' },
@@ -65,16 +94,69 @@ function App() {
   const [storyId, setStoryId] = useState<string | null>(() =>
     getCurrentStoryId(),
   )
+  const [isProfilePage, setIsProfilePage] = useState(
+    () => window.location.hash === '#/profile',
+  )
+  const [authRequestMode, setAuthRequestMode] = useState<
+    'login' | 'register' | null
+  >(null)
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null)
+  const [isAuthLoading, setIsAuthLoading] = useState(true)
+  const [authError, setAuthError] = useState('')
+  const [progressByStoryId, setProgressByStoryId] = useState<ProgressByStoryId>(
+    {},
+  )
+  const [isProgressLoading, setIsProgressLoading] = useState(false)
+  const [progressSyncError, setProgressSyncError] = useState('')
   const [selectedModel, setSelectedModel] = useState<AiModelId>(() =>
     loadSelectedModel(),
   )
+
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadSession() {
+      setIsAuthLoading(true)
+      setAuthError('')
+
+      try {
+        const user = await getCurrentUser()
+        if (!isMounted) {
+          return
+        }
+
+        setAuthUser(user)
+        if (user) {
+          await loadProgressRecords(isMounted)
+        }
+      } catch (error) {
+        if (isMounted) {
+          console.error('Failed to load user session', error)
+          setAuthError('登录状态读取失败，请刷新后再试。')
+        }
+      } finally {
+        if (isMounted) {
+          setIsAuthLoading(false)
+        }
+      }
+    }
+
+    void loadSession()
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   useEffect(() => {
     saveSelectedModel(selectedModel)
   }, [selectedModel])
 
   useEffect(() => {
-    const handleHashChange = () => setStoryId(getCurrentStoryId())
+    const handleHashChange = () => {
+      setStoryId(getCurrentStoryId())
+      setIsProfilePage(window.location.hash === '#/profile')
+    }
     window.addEventListener('hashchange', handleHashChange)
     return () => window.removeEventListener('hashchange', handleHashChange)
   }, [])
@@ -85,23 +167,363 @@ function App() {
 
   const story = storyId ? getStoryById(storyId) : undefined
 
+  async function loadProgressRecords(isMounted = true) {
+    setIsProgressLoading(true)
+    setProgressSyncError('')
+
+    try {
+      const records = await getProgressRecords()
+      if (!isMounted) {
+        return
+      }
+
+      setProgressByStoryId(
+        Object.fromEntries(records.map((record) => [record.storyId, record])),
+      )
+    } catch (error) {
+      console.error('Failed to load progress records', error)
+      if (isMounted) {
+        setProgressSyncError('做题记录读取失败，请稍后刷新。')
+      }
+    } finally {
+      if (isMounted) {
+        setIsProgressLoading(false)
+      }
+    }
+  }
+
+  async function handleAuthenticated(user: AuthUser) {
+    setAuthUser(user)
+    setAuthRequestMode(null)
+    await loadProgressRecords()
+  }
+
+  async function handleLogout() {
+    try {
+      await logoutUser()
+    } catch (error) {
+      console.error('Logout failed', error)
+    } finally {
+      setAuthUser(null)
+      setProgressByStoryId({})
+      window.location.hash = ''
+    }
+  }
+
+  const handleProgressChange = useCallback(
+    (storyId: string, progress: StoryProgressData) => {
+      const optimisticRecord = makeProgressRecord(storyId, progress)
+      setProgressByStoryId((current) => ({
+        ...current,
+        [storyId]: optimisticRecord,
+      }))
+      setProgressSyncError('')
+
+      void saveProgressRecord(storyId, progress)
+        .then((record) => {
+          setProgressByStoryId((current) => ({
+            ...current,
+            [storyId]: record,
+          }))
+        })
+        .catch((error) => {
+          console.error('Failed to sync story progress', error)
+          setProgressSyncError('做题记录暂时没有同步成功。')
+        })
+    },
+    [],
+  )
+
+  const handleProgressClear = useCallback((storyId: string) => {
+    setProgressByStoryId((current) => {
+      const next = { ...current }
+      delete next[storyId]
+      return next
+    })
+    setProgressSyncError('')
+
+    void deleteProgressRecord(storyId).catch((error) => {
+      console.error('Failed to delete story progress', error)
+      setProgressSyncError('重开记录暂时没有同步成功。')
+    })
+  }, [])
+
+  if (isAuthLoading && storyId) {
+    return <LoadingScreen message="正在打开汤题..." />
+  }
+
+  if (authUser && isProgressLoading && storyId) {
+    return <LoadingScreen message="正在读取你的做题记录..." />
+  }
+
   if (storyId && !story) {
     return <MissingStory />
+  }
+
+  if (!authUser && (authRequestMode || isProfilePage)) {
+    return (
+      <AuthGate
+        defaultMode={authRequestMode ?? 'login'}
+        error={authError}
+        onAuthenticated={handleAuthenticated}
+        onBackHome={() => {
+          setAuthRequestMode(null)
+          window.location.hash = ''
+        }}
+      />
+    )
+  }
+
+  if (isProfilePage && authUser) {
+    return (
+      <ProfilePage
+        user={authUser}
+        onBackHome={() => {
+          window.location.hash = ''
+        }}
+        onUserChange={setAuthUser}
+      />
+    )
   }
 
   return story ? (
     <StoryPage
       key={story.id}
       onSelectedModelChange={setSelectedModel}
+      onOpenAuth={setAuthRequestMode}
+      onProgressChange={handleProgressChange}
+      onProgressClear={handleProgressClear}
       selectedModel={selectedModel}
       story={story}
+      progress={authUser ? progressByStoryId[story.id]?.progress : undefined}
+      progressByStoryId={authUser ? progressByStoryId : {}}
+      user={authUser}
     />
   ) : (
-    <HomePage />
+    <HomePage
+      onOpenAuth={setAuthRequestMode}
+      onLogout={handleLogout}
+      progressByStoryId={authUser ? progressByStoryId : {}}
+      user={authUser}
+    />
   )
 }
 
-function HomePage() {
+function LoadingScreen({ message }: { message: string }) {
+  return (
+    <main className="loading-shell" aria-live="polite">
+      <div className="loading-mark">
+        <RefreshCw className="spin" size={26} />
+      </div>
+      <p>{message}</p>
+    </main>
+  )
+}
+
+function AuthGate({
+  defaultMode,
+  error,
+  onAuthenticated,
+  onBackHome,
+}: {
+  defaultMode: 'login' | 'register'
+  error: string
+  onAuthenticated: (user: AuthUser) => Promise<void>
+  onBackHome: () => void
+}) {
+  const [mode, setMode] = useState<'login' | 'register'>(defaultMode)
+  const [username, setUsername] = useState('')
+  const [email, setEmail] = useState('')
+  const [identity, setIdentity] = useState('')
+  const [password, setPassword] = useState('')
+  const [formError, setFormError] = useState(error)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  useEffect(() => {
+    setFormError(error)
+  }, [error])
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setIsSubmitting(true)
+    setFormError('')
+
+    try {
+      const user =
+        mode === 'register'
+          ? await registerUser({ username, email, password })
+          : await loginUser({ identity, password })
+      await onAuthenticated(user)
+    } catch (error) {
+      setFormError(
+        error instanceof ApiError ? error.message : '请求失败，请稍后再试。',
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  function switchMode(nextMode: 'login' | 'register') {
+    setMode(nextMode)
+    setPassword('')
+    setFormError('')
+  }
+
+  return (
+    <main className="app-shell auth-shell">
+      <section className="auth-hero">
+        <p className="eyebrow">Turtle Soup</p>
+        <h1>登录后开始推理。</h1>
+        <p>
+          题库可以自由浏览；进入一题后，追问、提示和揭晓会保存到你的账号里。
+        </p>
+      </section>
+
+      <section className="auth-panel" aria-label="用户登录注册">
+        <button className="auth-back-button" type="button" onClick={onBackHome}>
+          <ArrowLeft size={17} />
+          返回题库
+        </button>
+        <div className="auth-tabs" role="tablist">
+          <button
+            aria-selected={mode === 'login'}
+            className={mode === 'login' ? 'active' : ''}
+            type="button"
+            onClick={() => switchMode('login')}
+          >
+            <LogIn size={17} />
+            登录
+          </button>
+          <button
+            aria-selected={mode === 'register'}
+            className={mode === 'register' ? 'active' : ''}
+            type="button"
+            onClick={() => switchMode('register')}
+          >
+            <UserRound size={17} />
+            注册
+          </button>
+        </div>
+
+        <form className="auth-form" onSubmit={handleSubmit}>
+          {mode === 'register' ? (
+            <>
+              <label>
+                <span>用户名</span>
+                <div className="auth-field">
+                  <UserRound size={18} />
+                  <input
+                    autoComplete="username"
+                    maxLength={24}
+                    required
+                    value={username}
+                    onChange={(event) => setUsername(event.target.value)}
+                  />
+                </div>
+              </label>
+              <label>
+                <span>邮箱</span>
+                <div className="auth-field">
+                  <Mail size={18} />
+                  <input
+                    autoComplete="email"
+                    required
+                    type="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                  />
+                </div>
+              </label>
+            </>
+          ) : (
+            <label>
+              <span>用户名或邮箱</span>
+              <div className="auth-field">
+                <UserRound size={18} />
+                <input
+                  autoComplete="username"
+                  required
+                  value={identity}
+                  onChange={(event) => setIdentity(event.target.value)}
+                />
+              </div>
+            </label>
+          )}
+
+          <label>
+            <span>密码</span>
+            <div className="auth-field">
+              <LockKeyhole size={18} />
+              <input
+                autoComplete={
+                  mode === 'register' ? 'new-password' : 'current-password'
+                }
+                minLength={8}
+                required
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </div>
+          </label>
+
+          {formError ? <p className="error-text">{formError}</p> : null}
+
+          <button className="auth-submit" disabled={isSubmitting} type="submit">
+            {isSubmitting ? (
+              <RefreshCw className="spin" size={18} />
+            ) : mode === 'register' ? (
+              <UserRound size={18} />
+            ) : (
+              <LogIn size={18} />
+            )}
+            {mode === 'register' ? '创建账号' : '登录'}
+          </button>
+          <button
+            className="auth-switch-link"
+            type="button"
+            onClick={() =>
+              switchMode(mode === 'register' ? 'login' : 'register')
+            }
+          >
+            {mode === 'register' ? '已有账号？去登录' : '还没有账号？去注册'}
+          </button>
+        </form>
+      </section>
+    </main>
+  )
+}
+
+function makeProgressRecord(
+  storyId: string,
+  progress: StoryProgressData,
+): ProgressRecord {
+  const updatedAt = new Date().toISOString()
+  return {
+    storyId,
+    progress: {
+      ...progress,
+      updatedAt,
+      version: 4,
+    },
+    entriesCount: progress.entries.length,
+    completed: progress.showTruth,
+    completedAt: progress.showTruth ? updatedAt : null,
+    updatedAt,
+  }
+}
+
+function HomePage({
+  user,
+  progressByStoryId,
+  onOpenAuth,
+  onLogout,
+}: {
+  user: AuthUser | null
+  progressByStoryId: ProgressByStoryId
+  onOpenAuth: (mode: 'login' | 'register') => void
+  onLogout: () => void
+}) {
   const [activeTag, setActiveTag] = useState('全部')
   const [activeDifficulty, setActiveDifficulty] = useState<Difficulty | '全部'>(
     '全部',
@@ -110,6 +532,8 @@ function HomePage() {
   const [showCompleted, setShowCompleted] = useState(false)
   const [showUncompleted, setShowUncompleted] = useState(false)
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
+  const [isHistoryPanelDismissed, setIsHistoryPanelDismissed] =
+    useState(false)
   const [pageSize, setPageSize] = useState<(typeof pageSizeOptions)[number]>(10)
   const [currentPage, setCurrentPage] = useState(1)
   const tags = useMemo(
@@ -122,11 +546,28 @@ function HomePage() {
   const completedStoryIds = useMemo(
     () =>
       new Set(
-        stories
-          .filter((story) => isStoryCompleted(story.id))
-          .map((story) => story.id),
+        Object.values(progressByStoryId)
+          .filter((record) => record.completed)
+          .map((record) => record.storyId),
       ),
-    [],
+    [progressByStoryId],
+  )
+  const recentProgressItems = useMemo(
+    () =>
+      Object.values(progressByStoryId)
+        .filter((record) => record.entriesCount > 0 || record.completed)
+        .sort(
+          (left, right) =>
+            new Date(right.updatedAt).getTime() -
+            new Date(left.updatedAt).getTime(),
+        )
+        .slice(0, 5)
+        .map((record) => ({
+          ...record,
+          story: getStoryById(record.storyId),
+        }))
+        .filter((item) => item.story),
+    [progressByStoryId],
   )
   const filteredStories = useMemo(
     () =>
@@ -187,8 +628,17 @@ function HomePage() {
     }
   }, [currentPage, pageCount])
 
+  useEffect(() => {
+    setIsHistoryPanelDismissed(false)
+  }, [user?.id])
+
   function openRandomStory() {
-    openRandomUnrevealedStory()
+    if (!user) {
+      openRandomUnrevealedStory(new Set())
+      return
+    }
+
+    openRandomUnrevealedStory(completedStoryIds)
   }
 
   return (
@@ -201,10 +651,17 @@ function HomePage() {
             像翻案卷一样挑选谜题，向 AI 主持人追问线索。
           </p>
         </div>
-        <button className="api-pill" type="button" onClick={openRandomStory}>
-          <Shuffle size={18} />
-          随机做一题
-        </button>
+        <div className="topbar-actions">
+          <button className="api-pill" type="button" onClick={openRandomStory}>
+            <Shuffle size={18} />
+            随机做一题
+          </button>
+          {user ? (
+            <AccountMenu user={user} onLogout={onLogout} />
+          ) : (
+            <AuthEntryButton onOpenAuth={onOpenAuth} />
+          )}
+        </div>
       </section>
 
       <section className="intro-band">
@@ -222,6 +679,44 @@ function HomePage() {
           </span>
         </div>
       </section>
+
+      {user && recentProgressItems.length > 0 && !isHistoryPanelDismissed ? (
+        <section className="history-panel" aria-label="最近做题记录">
+          <div className="history-panel-heading">
+            <h2>最近记录</h2>
+            <button
+              aria-label="关闭最近记录"
+              className="history-close-button"
+              type="button"
+              onClick={() => setIsHistoryPanelDismissed(true)}
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <div className="history-list">
+            {recentProgressItems.map(({ story, completed }) =>
+              story ? (
+                <a
+                  className={
+                    completed ? 'history-item completed' : 'history-item'
+                  }
+                  href={getStoryPath(story.id)}
+                  key={story.id}
+                >
+                  <span>{story.title}</span>
+                  {completed ? (
+                    <CheckCircle2
+                      aria-label="已揭晓"
+                      className="history-completed-icon"
+                      size={18}
+                    />
+                  ) : null}
+                </a>
+              ) : null,
+            )}
+          </div>
+        </section>
+      ) : null}
 
       <section className="search-panel" aria-label="搜索和显示选项">
         <label className="search-field">
@@ -293,9 +788,7 @@ function HomePage() {
 
             <div className="filter-row" aria-label="题目难度筛选">
               <button
-                className={
-                  activeDifficulty === '全部' ? 'chip active' : 'chip'
-                }
+                className={activeDifficulty === '全部' ? 'chip active' : 'chip'}
                 type="button"
                 onClick={() => setActiveDifficulty('全部')}
               >
@@ -411,6 +904,263 @@ function HomePage() {
   )
 }
 
+function AuthEntryButton({
+  onOpenAuth,
+}: {
+  onOpenAuth: (mode: 'login' | 'register') => void
+}) {
+  return (
+    <button
+      aria-label="登录或注册"
+      className="auth-entry-button"
+      type="button"
+      onClick={() => onOpenAuth('login')}
+    >
+      <UserRound size={18} />
+      登录/注册
+    </button>
+  )
+}
+
+function AccountMenu({
+  user,
+  onLogout,
+}: {
+  user: AuthUser
+  onLogout: () => void
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!isOpen) {
+      return
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setIsOpen(false)
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setIsOpen(false)
+      }
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isOpen])
+
+  return (
+    <div className="account-menu" ref={menuRef}>
+      <button
+        aria-expanded={isOpen}
+        aria-haspopup="menu"
+        aria-label="打开个人菜单"
+        className="avatar-button"
+        type="button"
+        onClick={() => setIsOpen((current) => !current)}
+      >
+        <UserAvatar user={user} />
+      </button>
+      {isOpen ? (
+        <div className="account-menu-panel" role="menu">
+          <p className="account-menu-title">个人详情</p>
+          <strong>{user.username}</strong>
+          <span>{user.email}</span>
+          <a href="#/profile" role="menuitem">
+            <UserRound size={16} />
+            编辑资料
+          </a>
+          <button type="button" role="menuitem" onClick={onLogout}>
+            <LogOut size={16} />
+            退出账号
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function ProfilePage({
+  user,
+  onBackHome,
+  onUserChange,
+}: {
+  user: AuthUser
+  onBackHome: () => void
+  onUserChange: (user: AuthUser) => void
+}) {
+  const [username, setUsername] = useState(user.username)
+  const [avatarUrl, setAvatarUrl] = useState(user.avatarUrl || '')
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const previewUser = { ...user, username, avatarUrl }
+
+  async function handleAvatarChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) {
+      return
+    }
+
+    setError('')
+    setNotice('')
+    if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) {
+      setError('头像仅支持 PNG、JPG、WebP 或 GIF。')
+      return
+    }
+
+    if (file.size > 256 * 1024) {
+      setError('头像文件需小于 256 KB。')
+      return
+    }
+
+    const dataUrl = await readFileAsDataUrl(file)
+    setAvatarUrl(dataUrl)
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setIsSaving(true)
+    setError('')
+    setNotice('')
+
+    try {
+      const updatedUser = await updateProfile({
+        username,
+        avatarUrl,
+      })
+      onUserChange(updatedUser)
+      setNotice('资料已保存。')
+    } catch (error) {
+      setError(
+        error instanceof ApiError ? error.message : '保存失败，请稍后再试。',
+      )
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  return (
+    <main className="app-shell profile-shell">
+      <nav className="story-nav" aria-label="页面导航">
+        <button
+          aria-label="返回首页"
+          className="nav-round-button"
+          title="返回首页"
+          type="button"
+          onClick={onBackHome}
+        >
+          <ArrowLeft size={19} />
+        </button>
+      </nav>
+
+      <section className="profile-panel">
+        <div className="profile-heading">
+          <div>
+            <p className="eyebrow">Profile</p>
+            <h1>个人资料</h1>
+          </div>
+          <UserAvatar className="profile-avatar" user={previewUser} />
+        </div>
+
+        <form className="profile-form" onSubmit={handleSubmit}>
+          <label>
+            <span>用户名</span>
+            <input
+              maxLength={24}
+              required
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+            />
+          </label>
+
+          <label>
+            <span>邮箱</span>
+            <input readOnly value={user.email} />
+          </label>
+
+          <div className="profile-upload-row">
+            <input
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              className="visually-hidden"
+              ref={fileInputRef}
+              type="file"
+              onChange={handleAvatarChange}
+            />
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <ImageUp size={18} />
+              上传头像
+            </button>
+          </div>
+
+          {error ? <p className="error-text">{error}</p> : null}
+          {notice ? <p className="success-text">{notice}</p> : null}
+
+          <button className="auth-submit" disabled={isSaving} type="submit">
+            {isSaving ? (
+              <RefreshCw className="spin" size={18} />
+            ) : (
+              <Save size={18} />
+            )}
+            保存资料
+          </button>
+        </form>
+      </section>
+    </main>
+  )
+}
+
+function UserAvatar({
+  className = '',
+  user,
+}: {
+  className?: string
+  user: Pick<AuthUser, 'avatarKey' | 'avatarUrl' | 'username'>
+}) {
+  if (user.avatarUrl) {
+    return (
+      <span className={`avatar-image ${className}`.trim()} aria-hidden="true">
+        <img alt="" src={user.avatarUrl} />
+      </span>
+    )
+  }
+
+  const avatarClassName = `avatar-mark ${getAvatarClassName(user.avatarKey)} ${className}`
+  return (
+    <span className={avatarClassName.trim()} aria-hidden="true">
+      <span />
+    </span>
+  )
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+function getAvatarClassName(avatarKey: string | undefined) {
+  const value =
+    avatarKey && /^[a-z]+-[0-5]$/.test(avatarKey) ? avatarKey : 'moss-0'
+  return `avatar-${value}`
+}
+
 type PageItem = number | 'ellipsis'
 
 function storyMatchesSearch(story: Story, query: string) {
@@ -471,8 +1221,7 @@ function mergeHintIndexes(
   return Array.from(
     new Set(
       [...currentIndexes, ...nextIndexes].filter(
-        (index) =>
-          Number.isInteger(index) && index >= 0 && index < hintCount,
+        (index) => Number.isInteger(index) && index >= 0 && index < hintCount,
       ),
     ),
   ).sort((left, right) => left - right)
@@ -522,15 +1271,24 @@ function getVisiblePageItems(
   return items
 }
 
-function getUnrevealedStories(excludedStoryId?: string) {
+function getUnrevealedStories(
+  completedStoryIds: Set<string>,
+  excludedStoryId?: string,
+) {
   return stories.filter(
     (candidate) =>
-      candidate.id !== excludedStoryId && !isStoryCompleted(candidate.id),
+      candidate.id !== excludedStoryId && !completedStoryIds.has(candidate.id),
   )
 }
 
-function openRandomUnrevealedStory(excludedStoryId?: string) {
-  const unrevealedStories = getUnrevealedStories(excludedStoryId)
+function openRandomUnrevealedStory(
+  completedStoryIds: Set<string>,
+  excludedStoryId?: string,
+) {
+  const unrevealedStories = getUnrevealedStories(
+    completedStoryIds,
+    excludedStoryId,
+  )
   const fallbackStories = excludedStoryId
     ? stories.filter((candidate) => candidate.id !== excludedStoryId)
     : stories
@@ -593,12 +1351,27 @@ function StoryPage({
   story,
   selectedModel,
   onSelectedModelChange,
+  user,
+  progress,
+  progressByStoryId,
+  onOpenAuth,
+  onProgressChange,
+  onProgressClear,
 }: {
   story: Story
   selectedModel: AiModelId
   onSelectedModelChange: (model: AiModelId) => void
+  user: AuthUser | null
+  progress?: StoryProgressData
+  progressByStoryId: ProgressByStoryId
+  onOpenAuth: (mode: 'login' | 'register') => void
+  onProgressChange: (storyId: string, progress: StoryProgressData) => void
+  onProgressClear: (storyId: string) => void
 }) {
-  const initialProgress = useMemo(() => loadStoryProgress(story.id), [story.id])
+  const initialProgress = useMemo(
+    () => normalizeStoryProgress(progress),
+    [progress],
+  )
   const [question, setQuestion] = useState('')
   const [entries, setEntries] = useState<ChatEntry[]>(
     () => initialProgress.entries,
@@ -618,9 +1391,7 @@ function StoryPage({
     () => initialProgress.hasAcceptedLimitOverrun,
   )
   const [revealMode, setRevealMode] = useState(false)
-  const [showTruth, setShowTruth] = useState(
-    () => initialProgress.showTruth,
-  )
+  const [showTruth, setShowTruth] = useState(() => initialProgress.showTruth)
   const [truthDialogMode, setTruthDialogMode] =
     useState<TruthDialogMode | null>(null)
   const [pendingHintIndex, setPendingHintIndex] = useState<number | null>(null)
@@ -653,9 +1424,30 @@ function StoryPage({
     hintItems.length,
     showTruth,
   )
+  const isAuthenticated = !!user
+  const askInputClassName = [
+    'ask-input-shell',
+    hintItems.length > 0 ? 'has-unlock-progress' : '',
+    !isAuthenticated ? 'auth-required' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const completedStoryIds = useMemo(
+    () =>
+      new Set(
+        Object.values(progressByStoryId)
+          .filter((record) => record.completed)
+          .map((record) => record.storyId),
+      ),
+    [progressByStoryId],
+  )
 
   useEffect(() => {
-    saveStoryProgress(story.id, {
+    if (!isAuthenticated) {
+      return
+    }
+
+    onProgressChange(story.id, {
       chargedHintIndexes,
       entries,
       hasAcceptedLimitOverrun,
@@ -668,6 +1460,8 @@ function StoryPage({
     entries,
     hasAcceptedLimitOverrun,
     hasSeenHintUnlockGuide,
+    isAuthenticated,
+    onProgressChange,
     revealedHintIndexes,
     showTruth,
     story.id,
@@ -794,12 +1588,22 @@ function StoryPage({
     return false
   }
 
+  function requireLoginForPlay() {
+    setError('')
+    onOpenAuth('register')
+  }
+
   function handleHintEnabledChange(isEnabled: boolean) {
     setHintEnabled(isEnabled)
     saveHintPreference(isEnabled)
   }
 
   function requestRevealHint(hintIndex: number) {
+    if (!isAuthenticated) {
+      requireLoginForPlay()
+      return
+    }
+
     if (showTruth || revealedHintIndexes.includes(hintIndex)) {
       return
     }
@@ -909,11 +1713,14 @@ function StoryPage({
       behavior,
     })
 
-    programmaticChatScrollTimeoutRef.current = window.setTimeout(() => {
-      isProgrammaticChatScrollRef.current = false
-      setIsReturningToLatest(false)
-      updateScrollLatestButton()
-    }, behavior === 'smooth' ? 520 : 0)
+    programmaticChatScrollTimeoutRef.current = window.setTimeout(
+      () => {
+        isProgrammaticChatScrollRef.current = false
+        setIsReturningToLatest(false)
+        updateScrollLatestButton()
+      },
+      behavior === 'smooth' ? 520 : 0,
+    )
   }
 
   function focusQuestionInput() {
@@ -941,6 +1748,11 @@ function StoryPage({
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (!isAuthenticated) {
+      requireLoginForPlay()
+      return
+    }
+
     const trimmedQuestion = question.trim()
 
     if (!trimmedQuestion) {
@@ -1025,6 +1837,11 @@ function StoryPage({
   }
 
   function handleRevealTruth() {
+    if (!isAuthenticated) {
+      requireLoginForPlay()
+      return
+    }
+
     setTruthDialogMode('confirm')
   }
 
@@ -1068,7 +1885,7 @@ function StoryPage({
   }
 
   function openRandomStory() {
-    openRandomUnrevealedStory(story.id)
+    openRandomUnrevealedStory(completedStoryIds, story.id)
   }
 
   function openNextStory() {
@@ -1084,23 +1901,25 @@ function StoryPage({
   return (
     <main className="app-shell story-layout">
       <nav className="story-nav" aria-label="页面导航">
-        <a
-          aria-label="返回首页"
-          className="nav-round-button"
-          href="#"
-          title="返回首页"
-        >
-          <ArrowLeft size={19} />
-        </a>
-        <button
-          aria-label="复制链接"
-          className="nav-round-button"
-          title="复制链接"
-          type="button"
-          onClick={copyLink}
-        >
-          <Link2 size={18} />
-        </button>
+        <div className="story-nav-actions">
+          <a
+            aria-label="返回首页"
+            className="nav-round-button"
+            href="#"
+            title="返回首页"
+          >
+            <ArrowLeft size={19} />
+          </a>
+          <button
+            aria-label="复制链接"
+            className="nav-round-button"
+            title="复制链接"
+            type="button"
+            onClick={copyLink}
+          >
+            <Link2 size={18} />
+          </button>
+        </div>
       </nav>
 
       <section className="story-title">
@@ -1206,17 +2025,12 @@ function StoryPage({
                 <div>
                   <span>玩法说明</span>
                   <div className="guide-message-copy">
+                    <p>右上角设置可切换 模型和游玩模式</p>
                     <p>
-                      右上角设置可切换
-                      模型和游玩模式
+                      <strong>提示模式：</strong>回答会附带 方向提示
                     </p>
                     <p>
-                      <strong>提示模式：</strong>回答会附带
-                      方向提示
-                    </p>
-                    <p>
-                      <strong>揭晓模式：</strong>用于提交
-                      完整真相
+                      <strong>揭晓模式：</strong>用于提交 完整真相
                     </p>
                     <p>
                       <strong>提示：</strong>可查看提示，消耗提问次数
@@ -1282,15 +2096,15 @@ function StoryPage({
             {entries.length === 0 ? (
               <div className="empty-chat">
                 <Sparkles size={22} />
-                <p>先问一个能用“是 / 不是 / 是也不是 / 无关”回答的问题。</p>
+                <p>
+                  {isAuthenticated
+                    ? '先问一个能用“是 / 不是 / 是也不是 / 无关”回答的问题。'
+                    : '阅读汤面后，登录即可开始提问并保存记录。'}
+                </p>
               </div>
             ) : (
               entries.map((entry, index) => (
-                <ChatBubble
-                  entry={entry}
-                  entryIndex={index}
-                  key={entry.id}
-                />
+                <ChatBubble entry={entry} entryIndex={index} key={entry.id} />
               ))
             )}
           </div>
@@ -1321,23 +2135,19 @@ function StoryPage({
         ) : null}
 
         <form className="ask-form" onSubmit={handleSubmit}>
-          <div
-            className={
-              hintItems.length > 0
-                ? 'ask-input-shell has-unlock-progress'
-                : 'ask-input-shell'
-            }
-          >
+          <div className={askInputClassName}>
             <textarea
               aria-label="输入你的问题"
-              disabled={isLoading}
+              disabled={isLoading || !isAuthenticated}
               maxLength={160}
               onChange={(event) => setQuestion(event.target.value)}
               onKeyDown={handleQuestionKeyDown}
               placeholder={
-                revealMode
-                  ? '输入你还原出的完整真相'
-                  : '例如：这个男人认识死者吗？'
+                !isAuthenticated
+                  ? '登录后开始提问'
+                  : revealMode
+                    ? '输入你还原出的完整真相'
+                    : '例如：这个男人认识死者吗？'
               }
               ref={questionInputRef}
               rows={1}
@@ -1350,10 +2160,12 @@ function StoryPage({
           <button disabled={isLoading} type="submit">
             {isLoading ? (
               <RefreshCw className="spin" size={18} />
+            ) : !isAuthenticated ? (
+              <LogIn size={18} />
             ) : (
               <Send size={18} />
             )}
-            发送
+            {isAuthenticated ? '发送' : '登录后提问'}
           </button>
         </form>
         {error ? <p className="error-text">{error}</p> : null}
@@ -1385,7 +2197,12 @@ function StoryPage({
           className="reset-button"
           type="button"
           onClick={() => {
-            clearStoryProgress(story.id)
+            if (!isAuthenticated) {
+              requireLoginForPlay()
+              return
+            }
+
+            onProgressClear(story.id)
             setEntries([])
             setShowTruth(false)
             setRevealedHintIndexes([])
@@ -1799,9 +2616,7 @@ function TruthRevealDialog({
         }
       }}
     >
-      {shouldShowConfetti ? (
-        <CanvasConfetti />
-      ) : null}
+      {shouldShowConfetti ? <CanvasConfetti /> : null}
       <div
         aria-describedby="truth-dialog-body"
         aria-labelledby="truth-dialog-title"
@@ -2065,11 +2880,37 @@ function CanvasConfetti() {
     }
   }, [])
 
-  return <canvas aria-hidden="true" className="confetti-canvas" ref={canvasRef} />
+  return (
+    <canvas aria-hidden="true" className="confetti-canvas" ref={canvasRef} />
+  )
 }
 
 function getStoryProgressStorageKey(storyId: string) {
   return `${STORY_PROGRESS_STORAGE_PREFIX}${storyId}`
+}
+
+function normalizeStoryProgress(progress?: Partial<StoryProgressData>): {
+  chargedHintIndexes: number[]
+  entries: ChatEntry[]
+  hasAcceptedLimitOverrun: boolean
+  hasSeenHintUnlockGuide: boolean
+  revealedHintIndexes: number[]
+  showTruth: boolean
+} {
+  return {
+    chargedHintIndexes: Array.isArray(progress?.chargedHintIndexes)
+      ? progress.chargedHintIndexes.filter(isHintIndex)
+      : [],
+    entries: Array.isArray(progress?.entries)
+      ? progress.entries.filter(isChatEntry)
+      : [],
+    hasAcceptedLimitOverrun: progress?.hasAcceptedLimitOverrun === true,
+    hasSeenHintUnlockGuide: progress?.hasSeenHintUnlockGuide === true,
+    revealedHintIndexes: Array.isArray(progress?.revealedHintIndexes)
+      ? progress.revealedHintIndexes.filter(isHintIndex)
+      : [],
+    showTruth: progress?.showTruth === true,
+  }
 }
 
 function loadSelectedModel(): AiModelId {
@@ -2315,10 +3156,7 @@ function playTone(
   filter.frequency.setValueAtTime(2400, startTime)
   envelope.gain.setValueAtTime(0.0001, startTime)
   envelope.gain.exponentialRampToValueAtTime(gain, startTime + 0.015)
-  envelope.gain.exponentialRampToValueAtTime(
-    0.0001,
-    startTime + duration,
-  )
+  envelope.gain.exponentialRampToValueAtTime(0.0001, startTime + duration)
 
   oscillator.connect(filter)
   filter.connect(envelope)
@@ -2495,11 +3333,7 @@ function SiteFooter() {
         >
           源码仓库
         </a>
-        <a
-          href="https://beian.miit.gov.cn/"
-          rel="noreferrer"
-          target="_blank"
-        >
+        <a href="https://beian.miit.gov.cn/" rel="noreferrer" target="_blank">
           浙ICP备2024119220号
         </a>
       </p>
