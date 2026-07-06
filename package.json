@@ -9,13 +9,19 @@
     "dev:start": "powershell -ExecutionPolicy Bypass -File scripts/start-dev.ps1",
     "dev:stop": "powershell -ExecutionPolicy Bypass -File scripts/stop-dev.ps1",
     "build": "tsc -b && vite build --configLoader native",
+    "test:api": "node --test api-proxy/index.test.mjs",
+    "test:server": "node --test server/index.test.mjs",
+    "check:api": "node --check api-proxy/index.mjs && node --check api-proxy/proxy-core.mjs && node --check server/index.mjs",
     "preview": "vite preview --configLoader native",
-    "deploy": "npm run build -- --base=/turtle-soup-ai/ && gh-pages -d dist"
+    "deploy": "npm run build -- --base=/turtle-soup-ai/ && gh-pages -d dist",
+    "start": "node server/index.mjs",
+    "start:server": "node server/start-server.mjs"
   },
   "dependencies": {
+    "@vercel/analytics": "^2.0.1",
+    "lucide-react": "^0.544.0",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1",
-    "lucide-react": "^0.544.0"
+    "react-dom": "^19.1.1"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",

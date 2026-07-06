@@ -1,11 +1,22 @@
 import type { AiAnswerText, AiRequest, AiResponse } from '../types/story'
+import {
+  ApiKeyUnlockError,
+  getApiKeyForModel,
+  hasConfiguredEncryptedApiKey,
+  hasUnlockedApiAccess,
+} from './apiKeyVault'
 
-const defaultApiUrl = 'https://turtle-soup-ai-proxy.ai-turtle-soup.workers.dev'
-const agnesChatCompletionsUrl =
-  'https://apihub.agnes-ai.com/v1/chat/completions'
-const agnesApiKey = 'sk-zhafY2pJ10V6owwddeI2Cp6OTECk91z81WwJfXrlZl9lmnI9'
-const agnesDefaultModel = 'agnes-2.0-flash'
-const agnesModels = new Set(['agnes-2.0-flash', 'agnes-1.5-flash'])
+const defaultDevApiUrl = '/api/ai'
+const defaultDeepSeekFcApiUrl =
+  'https://turtle-ai-proxy-opzmtticwv.cn-wulanchabu.fcapp.run'
+const retryableStatuses = new Set([502, 503, 504])
+const maxAttempts = 2
+const retryDelayMs = 600
+const defaultDirectBaseUrlByModel: Partial<Record<AiRequest['model'], string>> =
+  {
+    'agnes-2.0-flash': 'https://apihub.agnes-ai.com/v1',
+    'claude-opus-4-8': 'https://api.unity2.ai',
+  }
 const validAnswers = new Set<AiAnswerText>([
   '是',
   '不是',
@@ -21,40 +32,122 @@ const labelByAnswer = {
   还原正确: 'solved',
 } as const
 
+type HintCandidate = NonNullable<AiRequest['hintCandidates']>[number]
+
 export async function askAi(request: AiRequest): Promise<AiResponse> {
-  const configuredApiUrl = import.meta.env.VITE_AI_API_URL as string | undefined
-  const apiUrl =
-    configuredApiUrl && !configuredApiUrl.includes('your-api.example.com')
-      ? configuredApiUrl
-      : defaultApiUrl
-
-  try {
-    return await askProxy(apiUrl, request)
-  } catch (error) {
-    if (!shouldUseAgnesFallback(error)) {
-      throw error
-    }
-
-    return askAgnesDirect(request)
+  if (request.model === 'deepseek-v4-flash') {
+    return askProxy(getDeepSeekProxyUrl(), request)
   }
+
+  assertApiGateUnlocked()
+
+  const directBaseUrl = getDirectBaseUrl(request.model)
+  if (directBaseUrl) {
+    return askOpenAiCompatible(directBaseUrl, request)
+  }
+
+  throw new AiConfigurationError(
+    `No AI route configured for ${request.model}`,
+  )
+}
+
+export { ApiKeyUnlockError }
+
+function assertApiGateUnlocked() {
+  if (!hasConfiguredEncryptedApiKey()) {
+    throw new ApiKeyUnlockError('No encrypted API key configured')
+  }
+
+  if (!hasUnlockedApiAccess()) {
+    throw new ApiKeyUnlockError('API key is locked')
+  }
+}
+
+async function askOpenAiCompatible(
+  baseUrl: string,
+  request: AiRequest,
+): Promise<AiResponse> {
+  const prompt = buildPrompt(request)
+  const response = await fetch(getChatCompletionsUrl(baseUrl), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${getApiKeyForModel(request.model)}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: request.model,
+      temperature: 0.1,
+      max_tokens: prompt.maxTokens,
+      messages: [
+        {
+          role: 'system',
+          content: prompt.system,
+        },
+        {
+          role: 'user',
+          content: prompt.user,
+        },
+      ],
+    }),
+  })
+
+  if (!response.ok) {
+    const detail = await readErrorDetail(response)
+    throw new AiProxyError(
+      `AI API failed with ${response.status}`,
+      response.status,
+      detail,
+    )
+  }
+
+  const data = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string } }>
+  }
+  return parseModelOutput(
+    data.choices?.[0]?.message?.content ?? '',
+    request,
+  )
 }
 
 async function askProxy(
   apiUrl: string,
   request: AiRequest,
 ): Promise<AiResponse> {
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(request),
-  })
+  const body = JSON.stringify(request)
+  let response: Response
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body,
+      })
+    } catch (error) {
+      if (attempt >= maxAttempts) {
+        throw error
+      }
+
+      await delay(retryDelayMs)
+      continue
+    }
+
+    if (!retryableStatuses.has(response.status) || attempt >= maxAttempts) {
+      break
+    }
+
+    await drainResponse(response)
+    await delay(retryDelayMs)
+  }
 
   if (!response.ok) {
+    const detail = await readErrorDetail(response)
     throw new AiProxyError(
       `AI API failed with ${response.status}`,
       response.status,
+      detail,
     )
   }
 
@@ -62,51 +155,14 @@ async function askProxy(
   return normalizeAiResponse(data, request.hintEnabled)
 }
 
-async function askAgnesDirect(request: AiRequest): Promise<AiResponse> {
-  const response = await fetch(agnesChatCompletionsUrl, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${agnesApiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: getAgnesModel(request.model),
-      temperature: 0.1,
-      messages: buildMessages(request),
-    }),
-  })
-
-  if (!response.ok) {
-    throw new Error(`Agnes API failed with ${response.status}`)
-  }
-
-  const data = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>
-  }
-
-  return parseModelOutput(
-    data.choices?.[0]?.message?.content ?? '',
-    request.hintEnabled,
-  )
-}
-
-function shouldUseAgnesFallback(error: unknown) {
-  if (error instanceof AiProxyError) {
-    return error.status >= 500
-  }
-
-  return true
-}
-
-function isAgnesModel(model: AiRequest['model']) {
-  return agnesModels.has(model)
-}
-
-function getAgnesModel(model: AiRequest['model']) {
-  return isAgnesModel(model) ? model : agnesDefaultModel
-}
-
-function buildMessages(request: AiRequest) {
+function buildPrompt(request: AiRequest) {
+  const hintCandidates = normalizeHintCandidates(request.hintCandidates)
+  const hintCandidateText =
+    hintCandidates.length > 0
+      ? hintCandidates
+          .map((candidate) => `${candidate.index}: ${candidate.text}`)
+          .join('\n')
+      : 'none'
   const answerOptions = request.revealMode
     ? '是|不是|是也不是|无关|还原正确'
     : '是|不是|是也不是|无关'
@@ -146,51 +202,73 @@ function buildMessages(request: AiRequest) {
     request.hintEnabled
       ? '当前已开启提示模式，可以额外给一句非常短的 hint，但不要剧透关键反转。'
       : '当前未开启提示模式，不要输出 hint。',
+    '同时比较用户消息和 hintCandidates。只有当用户消息与候选提示中的关键词、关键物品、关键动作或关键因果高度相关时，才把该候选 index 放入 matchedHintIndexes。',
+    '不要因为用户问题泛泛接近汤底、只表达宽泛方向、只碰到故事常见背景，就判定提示匹配；没有明确关键词重合或强语义对应时返回空数组。',
+    'matchedHintIndexes 只能包含 hintCandidates 中出现的 index。',
     '必须输出严格 JSON，不要输出 Markdown。',
     request.hintEnabled
-      ? `JSON 格式：{"answer":"${answerOptions}","hint":"一句非常短的提示"}`
-      : `JSON 格式：{"answer":"${answerOptions}"}`,
+      ? `JSON 格式：{"answer":"${answerOptions}","hint":"一句非常短的提示","matchedHintIndexes":[0]}`
+      : `JSON 格式：{"answer":"${answerOptions}","matchedHintIndexes":[0]}`,
   ].join('\n')
 
   const user = [
     `汤面：${request.surface}`,
     `汤底：${request.truth}`,
     `${request.revealMode ? '用户还原' : '问题'}：${request.question}`,
+    `hintCandidates:\n${hintCandidateText}`,
   ].join('\n\n')
 
-  return [
-    {
-      role: 'system',
-      content: system,
-    },
-    {
-      role: 'user',
-      content: user,
-    },
-  ]
+  return {
+    system,
+    user,
+    maxTokens: request.hintEnabled ? 120 : 64,
+  }
 }
 
-function parseModelOutput(content: string, hintEnabled: boolean): AiResponse {
+function parseModelOutput(content: string, request: AiRequest): AiResponse {
+  const hintCandidates = normalizeHintCandidates(request.hintCandidates)
   const fallbackAnswer = extractAnswer(content)
   const jsonText = extractJsonObject(content)
+  const validHintIndexes = new Set(
+    hintCandidates.map((candidate) => candidate.index),
+  )
 
   try {
     const parsed = JSON.parse(jsonText) as Partial<{
-      answer: string
-      hint: string
+      answer: unknown
+      hint: unknown
+      matchedHintIndexes: unknown
     }>
-    return normalizeAiResponse(
-      {
-        answer: normalizeAnswer(parsed.answer || fallbackAnswer),
-        hint:
-          typeof parsed.hint === 'string'
-            ? parsed.hint.trim().slice(0, 80)
-            : undefined,
-      },
-      hintEnabled,
+    const answer = normalizeAnswer(
+      typeof parsed.answer === 'string' ? parsed.answer : fallbackAnswer,
     )
+    const response: AiResponse = {
+      answer,
+      label: labelByAnswer[answer],
+      matchedHintIndexes: normalizeMatchedHintIndexes(
+        parsed.matchedHintIndexes,
+        validHintIndexes,
+        hintCandidates,
+        request.question,
+      ),
+    }
+
+    if (
+      request.hintEnabled &&
+      typeof parsed.hint === 'string' &&
+      parsed.hint.trim()
+    ) {
+      response.hint = parsed.hint.trim().slice(0, 80)
+    }
+
+    return response
   } catch {
-    return normalizeAiResponse({ answer: fallbackAnswer }, hintEnabled)
+    const answer = normalizeAnswer(fallbackAnswer)
+    return {
+      answer,
+      label: labelByAnswer[answer],
+      matchedHintIndexes: [],
+    }
   }
 }
 
@@ -236,6 +314,7 @@ function normalizeAiResponse(
   const normalized: AiResponse = {
     answer,
     label: data.label ?? labelByAnswer[answer],
+    matchedHintIndexes: normalizeHintIndexes(data.matchedHintIndexes),
   }
 
   if (hintEnabled && data.hint) {
@@ -245,10 +324,254 @@ function normalizeAiResponse(
   return normalized
 }
 
+function normalizeHintCandidates(value: AiRequest['hintCandidates']) {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const seen = new Set<number>()
+  const candidates: HintCandidate[] = []
+
+  for (const candidate of value) {
+    if (
+      !candidate ||
+      typeof candidate !== 'object' ||
+      !Number.isInteger(candidate.index) ||
+      candidate.index < 0 ||
+      candidate.index >= 3 ||
+      typeof candidate.text !== 'string'
+    ) {
+      continue
+    }
+
+    const text = candidate.text.trim()
+    if (!text || seen.has(candidate.index)) {
+      continue
+    }
+
+    seen.add(candidate.index)
+    candidates.push({
+      index: candidate.index,
+      text: text.slice(0, 120),
+    })
+  }
+
+  return candidates
+}
+
+function normalizeHintIndexes(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return Array.from(
+    new Set(
+      value.filter(
+        (index): index is number =>
+          typeof index === 'number' &&
+          Number.isInteger(index) &&
+          index >= 0 &&
+          index < 3,
+      ),
+    ),
+  ).sort((left, right) => left - right)
+}
+
+function normalizeMatchedHintIndexes(
+  value: unknown,
+  validHintIndexes: Set<number>,
+  hintCandidates: HintCandidate[],
+  question: string,
+) {
+  if (!Array.isArray(value) || validHintIndexes.size === 0) {
+    return []
+  }
+
+  const candidateByIndex = new Map(
+    hintCandidates.map((candidate) => [candidate.index, candidate]),
+  )
+
+  return Array.from(
+    new Set(
+      value.filter((index): index is number => {
+        if (!Number.isInteger(index) || !validHintIndexes.has(index)) {
+          return false
+        }
+
+        const candidate = candidateByIndex.get(index)
+        return !!candidate && isKeywordRelevant(question, candidate.text)
+      }),
+    ),
+  ).sort((left, right) => left - right)
+}
+
+function isKeywordRelevant(question: string, hintText: string) {
+  const questionTokens = getKeywordTokens(question)
+  const hintTokens = getKeywordTokens(hintText)
+
+  if (questionTokens.size === 0 || hintTokens.size === 0) {
+    return false
+  }
+
+  let overlapCount = 0
+  for (const token of hintTokens) {
+    if (questionTokens.has(token)) {
+      overlapCount += 1
+    }
+  }
+
+  const overlapRatio = overlapCount / hintTokens.size
+  if (overlapCount >= 1 && overlapRatio >= 0.25) {
+    return true
+  }
+
+  for (const hintToken of hintTokens) {
+    if (hintToken.length < 2) {
+      continue
+    }
+
+    for (const questionToken of questionTokens) {
+      if (
+        questionToken.length >= 2 &&
+        (questionToken.includes(hintToken) || hintToken.includes(questionToken))
+      ) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+function getKeywordTokens(value: string) {
+  const normalized = String(value || '')
+    .toLowerCase()
+    .replace(/[，。！？、；：“”‘’（）()[\]{}<>《》.,!?;:'"`~@#$%^&*_+=|\\/\\-]/g, ' ')
+  const tokens = new Set<string>()
+
+  for (const token of normalized.match(/[a-z0-9]+/g) || []) {
+    if (token.length >= 3) {
+      tokens.add(token)
+    }
+  }
+
+  for (const token of normalized.match(/[\u4e00-\u9fff]{2,}/g) || []) {
+    tokens.add(token)
+    for (let size = 2; size <= Math.min(4, token.length); size += 1) {
+      for (let index = 0; index <= token.length - size; index += 1) {
+        tokens.add(token.slice(index, index + size))
+      }
+    }
+  }
+
+  return tokens
+}
+
+function getDeepSeekProxyUrl() {
+  const configuredDeepSeekProxyUrl = getConfiguredAbsoluteEnvUrl(
+    import.meta.env.VITE_DEEPSEEK_FC_API_URL,
+  )
+  if (configuredDeepSeekProxyUrl) {
+    return configuredDeepSeekProxyUrl
+  }
+
+  const configuredProxyUrl = getConfiguredEnvUrl(import.meta.env.VITE_AI_API_URL)
+  if (configuredProxyUrl) {
+    if (isAbsoluteUrl(configuredProxyUrl) || import.meta.env.DEV) {
+      return configuredProxyUrl
+    }
+  }
+
+  return import.meta.env.DEV ? defaultDevApiUrl : defaultDeepSeekFcApiUrl
+}
+
+function getDirectBaseUrl(model: AiRequest['model']) {
+  const configuredUrl = getConfiguredAbsoluteEnvUrl(getDirectBaseEnvValue(model))
+  if (configuredUrl) {
+    return configuredUrl
+  }
+
+  return defaultDirectBaseUrlByModel[model] ?? ''
+}
+
+function getDirectBaseEnvValue(model: AiRequest['model']) {
+  if (model === 'agnes-2.0-flash') {
+    return import.meta.env.VITE_AGNES_API_BASE_URL as string | undefined
+  }
+
+  if (model === 'claude-opus-4-8') {
+    return import.meta.env.VITE_UNITY_API_BASE_URL as string | undefined
+  }
+
+  return undefined
+}
+
+function getConfiguredAbsoluteEnvUrl(value: string | undefined) {
+  const configuredUrl = getConfiguredEnvUrl(value)
+  return configuredUrl && isAbsoluteUrl(configuredUrl) ? configuredUrl : ''
+}
+
+function getConfiguredEnvUrl(value: string | undefined) {
+  const trimmed = value?.trim()
+  if (!trimmed || trimmed.includes('your-')) {
+    return ''
+  }
+
+  return trimmed
+}
+
+function getChatCompletionsUrl(baseUrl: string) {
+  const trimmed = trimTrailingSlash(baseUrl)
+  return trimmed.endsWith('/chat/completions')
+    ? trimmed
+    : `${trimmed}/chat/completions`
+}
+
+function isAbsoluteUrl(value: string) {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function trimTrailingSlash(value: string) {
+  return value.replace(/\/+$/, '')
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+async function drainResponse(response: Response): Promise<void> {
+  try {
+    await response.text()
+  } catch {
+    // Ignore retry body read failures.
+  }
+}
+
+async function readErrorDetail(response: Response): Promise<string> {
+  try {
+    return (await response.text()).slice(0, 500)
+  } catch {
+    return ''
+  }
+}
+
+class AiConfigurationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'AiConfigurationError'
+  }
+}
+
 class AiProxyError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly detail: string,
   ) {
     super(message)
   }

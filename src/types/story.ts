@@ -10,12 +10,19 @@ export type StorySource = {
   note?: string;
 };
 
+export type StoryHints = {
+  questionLimit: number;
+  hintCost: number;
+  items: [string, string, string];
+};
+
 export type Story = {
   id: string;
   title: string;
   surface: string;
   truth: string;
   difficulty: Difficulty;
+  hints?: StoryHints;
   tags: string[];
   summary?: string;
   source: StorySource;
@@ -25,13 +32,20 @@ export type AnswerLabel = "yes" | "no" | "both" | "irrelevant" | "solved";
 
 export type AiAnswerText = "是" | "不是" | "是也不是" | "无关" | "还原正确";
 
-export type AiModelId = "mimo-v2.5-pro" | "claude-opus-4-8" | "agnes-2.0-flash" | "agnes-1.5-flash";
+export type AiModelId =
+  | "agnes-2.0-flash"
+  | "deepseek-v4-flash"
+  | "claude-opus-4-8";
 
 export type AiRequest = {
   storyId: string;
   surface: string;
   truth: string;
   question: string;
+  hintCandidates?: Array<{
+    index: number;
+    text: string;
+  }>;
   hintEnabled: boolean;
   revealMode: boolean;
   model: AiModelId;
@@ -42,6 +56,7 @@ export type AiResponse = {
   answer: AiAnswerText;
   label: AnswerLabel;
   hint?: string;
+  matchedHintIndexes?: number[];
 };
 
 export type ChatEntry = {
