@@ -35,6 +35,7 @@ export function createApp(options = {}) {
       DEFAULT_FC_RETRY_DELAY_MS,
     ),
     fetchImpl: options.fetchImpl || fetch,
+    env: options.env || {},
   }
 
   return createServer((request, response) => {
@@ -65,6 +66,7 @@ async function handleLocalApiRequest(request, response, config) {
   const fetchRequest = await toFetchRequest(request)
   const apiResponse = await handleApiRequest(fetchRequest, {
     ...process.env,
+    ...config.env,
     FC_API_URL: config.fcApiUrl,
     FC_MAX_ATTEMPTS: config.fcMaxAttempts,
     FC_RETRY_DELAY_MS: config.fcRetryDelayMs,

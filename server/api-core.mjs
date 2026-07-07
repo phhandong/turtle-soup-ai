@@ -17,6 +17,12 @@ import {
   validateRegistrationPayload,
   verifyPassword,
 } from './auth-utils.mjs'
+import {
+  createRedisSession,
+  deleteRedisSession,
+  getRedisSession,
+  touchRedisSession,
+} from './redis-session-store.mjs'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json; charset=utf-8',
@@ -25,6 +31,9 @@ const JSON_HEADERS = {
 const MAX_PROGRESS_BYTES = 1024 * 1024
 const SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000
 const RETRYABLE_UPSTREAM_STATUSES = new Set([502, 503, 504])
+const DB_MAX_ATTEMPTS = 2
+const DB_RETRY_DELAY_MS = 350
+const DEFAULT_DB_QUERY_TIMEOUT_MS = 10000
 
 const sqlByConnectionString = new Map()
 let schemaReady = false
@@ -33,6 +42,11 @@ export async function handleApiRequest(request, env = process.env) {
   const url = new URL(request.url)
 
   if (url.pathname === '/api/ai') {
+    const session = await requireSession(request, env)
+    if (!session.ok) {
+      return session.response
+    }
+
     if (env.FC_API_URL) {
       return proxyAiToFc(request, env)
     }
@@ -54,27 +68,27 @@ export async function handleApiRequest(request, env = process.env) {
 
   try {
     if (url.pathname === '/api/auth/register') {
-      return register(request, env)
+      return await register(request, env)
     }
 
     if (url.pathname === '/api/auth/login') {
-      return login(request, env)
+      return await login(request, env)
     }
 
     if (url.pathname === '/api/auth/logout') {
-      return logout(request, env)
+      return await logout(request, env)
     }
 
     if (url.pathname === '/api/auth/me') {
-      return me(request, env)
+      return await me(request, env)
     }
 
     if (url.pathname === '/api/auth/profile') {
-      return profile(request, env)
+      return await profile(request, env)
     }
 
     if (url.pathname === '/api/progress') {
-      return progress(request, env)
+      return await progress(request, env)
     }
 
     return json({ error: 'Not found' }, 404)
@@ -297,11 +311,14 @@ async function logout(request, env) {
     return methodNotAllowed()
   }
 
-  const sql = await getReadySql(env)
   const token = getSessionToken(request)
   if (token) {
     const tokenHash = hashSessionToken(token, getSessionSecret(env))
-    await sql`DELETE FROM sessions WHERE token_hash = ${tokenHash}`
+    try {
+      await deleteRedisSession(env, tokenHash)
+    } catch (error) {
+      console.error('Failed to delete Redis session during logout', error)
+    }
   }
 
   return json(
@@ -427,10 +444,7 @@ async function createSessionResponse(request, env, sql, user, status = 200) {
   const token = createSessionToken()
   const tokenHash = hashSessionToken(token, getSessionSecret(env))
 
-  await sql`
-    INSERT INTO sessions (token_hash, user_id, expires_at)
-    VALUES (${tokenHash}, ${user.id}, now() + interval '30 days')
-  `
+  await createRedisSession(env, tokenHash, user.id)
 
   return json(
     { user },
@@ -459,19 +473,22 @@ async function getSession(request, env) {
 
   const sql = await getReadySql(env)
   const tokenHash = hashSessionToken(token, getSessionSecret(env))
+  const session = await getRedisSession(env, tokenHash)
+
+  if (!session) {
+    return null
+  }
+
   const [row] = await sql`
     SELECT
-      sessions.last_seen_at,
-      users.id,
-      users.username,
-      users.email,
-      users.avatar_key,
-      users.avatar_url,
-      users.created_at
-    FROM sessions
-    JOIN users ON users.id = sessions.user_id
-    WHERE sessions.token_hash = ${tokenHash}
-      AND sessions.expires_at > now()
+      id,
+      username,
+      email,
+      avatar_key,
+      avatar_url,
+      created_at
+    FROM users
+    WHERE id = ${session.userId}
     LIMIT 1
   `
 
@@ -480,14 +497,10 @@ async function getSession(request, env) {
   }
 
   if (
-    !row.last_seen_at ||
-    Date.now() - new Date(row.last_seen_at).getTime() > SESSION_TOUCH_INTERVAL_MS
+    !session.lastSeenAt ||
+    Date.now() - new Date(session.lastSeenAt).getTime() > SESSION_TOUCH_INTERVAL_MS
   ) {
-    await sql`
-      UPDATE sessions
-      SET last_seen_at = now()
-      WHERE token_hash = ${tokenHash}
-    `
+    await touchRedisSession(env, tokenHash, session)
   }
 
   return {
@@ -514,16 +527,88 @@ async function getReadySql(env) {
 }
 
 function getSql(env) {
+  if (env.__sql) {
+    return env.__sql
+  }
+
   const connectionString = env.DATABASE_URL || env.POSTGRES_URL
   if (!connectionString) {
     throw new Error('DATABASE_URL or POSTGRES_URL is required')
   }
 
   if (!sqlByConnectionString.has(connectionString)) {
-    sqlByConnectionString.set(connectionString, neon(connectionString))
+    sqlByConnectionString.set(
+      connectionString,
+      withSqlRetry(neon(connectionString), env),
+    )
   }
 
   return sqlByConnectionString.get(connectionString)
+}
+
+function withSqlRetry(sql, env) {
+  const timeoutMs = getPositiveNumber(
+    env.DB_QUERY_TIMEOUT_MS,
+    DEFAULT_DB_QUERY_TIMEOUT_MS,
+  )
+
+  return async function retryingSql(strings, ...values) {
+    let lastError
+
+    for (let attempt = 1; attempt <= DB_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        return await withTimeout(
+          sql(strings, ...values),
+          timeoutMs,
+          'Database query timed out',
+        )
+      } catch (error) {
+        lastError = error
+        if (!isRetryableDatabaseError(error) || attempt >= DB_MAX_ATTEMPTS) {
+          throw error
+        }
+
+        await delay(DB_RETRY_DELAY_MS)
+      }
+    }
+
+    throw lastError
+  }
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  let timeoutId
+
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const error = new Error(message)
+      error.code = 'ETIMEDOUT'
+      reject(error)
+    }, timeoutMs)
+  })
+
+  return Promise.race([promise, timeout]).finally(() => {
+    clearTimeout(timeoutId)
+  })
+}
+
+function isRetryableDatabaseError(error) {
+  const code =
+    error?.sourceError?.cause?.code ||
+    error?.sourceError?.code ||
+    error?.cause?.code ||
+    error?.code ||
+    ''
+  const message = String(error?.message || error?.sourceError?.message || '')
+
+  return (
+    code === 'UND_ERR_HEADERS_TIMEOUT' ||
+    code === 'UND_ERR_CONNECT_TIMEOUT' ||
+    code === 'UND_ERR_SOCKET' ||
+    code === 'ECONNRESET' ||
+    code === 'ETIMEDOUT' ||
+    /fetch failed|Headers Timeout|network|timeout/i.test(message)
+  )
 }
 
 async function ensureSchema(sql) {
@@ -548,19 +633,6 @@ async function ensureSchema(sql) {
   await sql`
     ALTER TABLE users
     ADD COLUMN IF NOT EXISTS avatar_url text
-  `
-  await sql`
-    CREATE TABLE IF NOT EXISTS sessions (
-      token_hash text PRIMARY KEY,
-      user_id text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      expires_at timestamptz NOT NULL,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      last_seen_at timestamptz NOT NULL DEFAULT now()
-    )
-  `
-  await sql`
-    CREATE INDEX IF NOT EXISTS sessions_user_id_idx
-    ON sessions(user_id)
   `
   await sql`
     CREATE TABLE IF NOT EXISTS story_progress (

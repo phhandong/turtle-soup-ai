@@ -10,9 +10,9 @@
     "dev:stop": "powershell -ExecutionPolicy Bypass -File scripts/stop-dev.ps1",
     "build": "tsc -b && vite build --configLoader native",
     "test:api": "node --test api-proxy/index.test.mjs",
-    "test:server": "node --test server/index.test.mjs",
-    "test:auth": "node --test server/auth-utils.test.mjs",
-    "check:api": "node --check api-proxy/index.mjs && node --check api-proxy/proxy-core.mjs && node --check server/auth-utils.mjs && node --check server/api-core.mjs && node --check server/env-loader.mjs && node --check server/vercel-adapter.mjs && node --check server/index.mjs && node --check \"api/[...path].js\" && node --check api/ai.js && node --check api/progress.js && node --check api/auth/login.js && node --check api/auth/logout.js && node --check api/auth/me.js && node --check api/auth/profile.js && node --check api/auth/register.js",
+    "test:server": "node --test server/index.test.mjs server/api-core.test.mjs",
+    "test:auth": "node --test server/auth-utils.test.mjs server/redis-session-store.test.mjs",
+    "check:api": "node --check api-proxy/index.mjs && node --check api-proxy/proxy-core.mjs && node --check server/auth-utils.mjs && node --check server/redis-session-store.mjs && node --check server/api-core.mjs && node --check server/env-loader.mjs && node --check server/vercel-adapter.mjs && node --check server/index.mjs && node --check \"api/[...path].js\" && node --check api/ai.js && node --check api/progress.js && node --check api/auth/login.js && node --check api/auth/logout.js && node --check api/auth/me.js && node --check api/auth/profile.js && node --check api/auth/register.js",
     "preview": "vite preview --configLoader native",
     "deploy": "npm run build -- --base=/turtle-soup-ai/ && gh-pages -d dist",
     "start": "node server/index.mjs",
@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
+    "@upstash/redis": "^1.38.0",
     "lucide-react": "^0.544.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"

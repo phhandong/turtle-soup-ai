@@ -43,20 +43,25 @@ npm run dev:stop
 npm run build
 ```
 
-## 用户系统与 Neon 数据库
+## 用户系统、Neon 数据库与 Upstash Redis
 
-本站需要登录后才能游玩。注册时填写用户名、邮箱和密码；登录支持用户名或邮箱。用户、会话和做题记录保存在 Neon Serverless Postgres。
+本站需要登录后才能游玩。注册时填写用户名、邮箱和密码；登录支持用户名或邮箱。用户资料和做题记录保存在 Neon Serverless Postgres，会话保存在 Upstash Redis，并通过 HttpOnly Cookie 维持登录状态。
 
 Vercel 环境变量至少需要：
 
 ```bash
 DATABASE_URL=postgres://...
 SESSION_SECRET=至少 32 位随机字符串
+KV_REST_API_URL=https://...
+KV_REST_API_TOKEN=...
+KV_REST_API_READ_ONLY_TOKEN=...
 FC_API_URL=https://turtle-ai-proxy-opzmtticwv.cn-wulanchabu.fcapp.run
 VITE_AI_API_URL=/api/ai
 ```
 
-也可以使用 Neon 自动注入的 `POSTGRES_URL`，代码会在 `DATABASE_URL` 缺失时回退使用它。首次请求 `/api/auth/*` 或 `/api/progress` 时会自动创建 `users`、`sessions`、`story_progress` 三张表。
+也可以使用 Neon 自动注入的 `POSTGRES_URL`，代码会在 `DATABASE_URL` 缺失时回退使用它。首次请求 `/api/auth/*` 或 `/api/progress` 时会自动创建 `users` 和 `story_progress` 两张表。旧版本创建过的 `sessions` 表不会被主动删除，但新会话只写入 Redis。
+
+Upstash 还会提供 `KV_URL` 和 `REDIS_URL` Redis 协议连接串；本站的 Vercel Serverless 链路使用 REST API 环境变量，不使用这两个连接串。`KV_REST_API_READ_ONLY_TOKEN` 用于会话读取，登录、登出和刷新会话 TTL 使用 `KV_REST_API_TOKEN`。如果 Redis 凭证曾出现在聊天、日志或公开位置，请先在 Upstash/Vercel 中 rotate 后再用于生产。
 
 ## 云服务器 Node 转发服务
 
@@ -75,6 +80,9 @@ $env:FC_API_URL = "https://api-turtle.handong-joy.xyz"
 $env:FC_TIMEOUT_MS = "30000"
 $env:DATABASE_URL = "postgres://..."
 $env:SESSION_SECRET = "replace-with-at-least-32-random-characters"
+$env:KV_REST_API_URL = "https://..."
+$env:KV_REST_API_TOKEN = "..."
+$env:KV_REST_API_READ_ONLY_TOKEN = "..."
 npm start
 ```
 
