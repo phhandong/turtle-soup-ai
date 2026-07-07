@@ -53,6 +53,17 @@ export async function deleteRedisSession(env, tokenHash) {
   await getWritableStore(env).del(getSessionKey(tokenHash))
 }
 
+export async function incrementRedisCounter(env, key, ttlSeconds) {
+  const store = getRateLimitStore(env)
+  const count = Number(await store.incr(key))
+
+  if (count === 1) {
+    await store.expire(key, ttlSeconds)
+  }
+
+  return count
+}
+
 export function getSessionKey(tokenHash) {
   return `${SESSION_KEY_PREFIX}${tokenHash}`
 }
@@ -72,6 +83,14 @@ function getWritableStore(env) {
   }
 
   return getRedisClient(env, getWriteToken(env), 'write')
+}
+
+function getRateLimitStore(env) {
+  if (env.__rateLimitStore) {
+    return env.__rateLimitStore
+  }
+
+  return getWritableStore(env)
 }
 
 function getRedisClient(env, token, mode) {

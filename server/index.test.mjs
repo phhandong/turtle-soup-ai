@@ -232,6 +232,12 @@ function createMemoryRedisClient(raw) {
     async set(key, value) {
       raw.set(key, value)
     },
+    async incr(key) {
+      const nextValue = Number(raw.get(key) || 0) + 1
+      raw.set(key, nextValue)
+      return nextValue
+    },
+    async expire() {},
     async del(key) {
       raw.delete(key)
     },

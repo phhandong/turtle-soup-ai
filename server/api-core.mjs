@@ -21,6 +21,7 @@ import {
   createRedisSession,
   deleteRedisSession,
   getRedisSession,
+  incrementRedisCounter,
   touchRedisSession,
 } from './redis-session-store.mjs'
 
@@ -34,6 +35,12 @@ const RETRYABLE_UPSTREAM_STATUSES = new Set([502, 503, 504])
 const DB_MAX_ATTEMPTS = 2
 const DB_RETRY_DELAY_MS = 350
 const DEFAULT_DB_QUERY_TIMEOUT_MS = 10000
+const AUTH_RATE_LIMIT_WINDOW_SECONDS = 15 * 60
+const AUTH_REGISTER_LIMIT = 5
+const AUTH_LOGIN_LIMIT = 20
+const AI_IP_RATE_LIMIT_WINDOW_SECONDS = 60
+const AI_IP_RATE_LIMIT = 30
+const AI_USER_DAILY_LIMIT = 200
 
 const sqlByConnectionString = new Map()
 let schemaReady = false
@@ -45,6 +52,11 @@ export async function handleApiRequest(request, env = process.env) {
     const session = await requireSession(request, env)
     if (!session.ok) {
       return session.response
+    }
+
+    const rateLimit = await checkAiRateLimit(request, env, session.user.id)
+    if (!rateLimit.ok) {
+      return rateLimit.response
     }
 
     if (env.FC_API_URL) {
@@ -149,6 +161,11 @@ async function register(request, env) {
     return methodNotAllowed()
   }
 
+  const rateLimit = await checkAuthRateLimit(request, env, 'register')
+  if (!rateLimit.ok) {
+    return rateLimit.response
+  }
+
   const payload = await readJson(request)
   const validation = validateRegistrationPayload(payload)
   if (!validation.ok) {
@@ -159,8 +176,12 @@ async function register(request, env) {
   const passwordHash = await hashPassword(validation.value.password)
   const userId = randomUUID()
   const avatarKey = createAvatarKey()
+  const sessionToken = createSessionToken()
+  const sessionTokenHash = hashSessionToken(sessionToken, getSessionSecret(env))
 
   try {
+    await createRedisSession(env, sessionTokenHash, userId)
+
     const [user] = await sql`
       INSERT INTO users (
         id,
@@ -182,8 +203,19 @@ async function register(request, env) {
       )
       RETURNING id, username, email, avatar_key, avatar_url, created_at
     `
-    return createSessionResponse(request, env, sql, toPublicUser(user), 201)
+    return createSessionResponse(
+      request,
+      env,
+      sql,
+      toPublicUser(user),
+      201,
+      sessionToken,
+    )
   } catch (error) {
+    await deleteRedisSession(env, sessionTokenHash).catch((cleanupError) => {
+      console.error('Failed to clean up pending registration session', cleanupError)
+    })
+
     if (isUniqueViolation(error)) {
       return json({ error: '用户名或邮箱已被注册。' }, 409)
     }
@@ -277,9 +309,91 @@ function getPositiveInteger(value, fallback) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
 }
 
+async function checkAuthRateLimit(request, env, action) {
+  const ip = getClientIp(request)
+  const limit =
+    action === 'register'
+      ? getPositiveInteger(env.AUTH_REGISTER_RATE_LIMIT, AUTH_REGISTER_LIMIT)
+      : getPositiveInteger(env.AUTH_LOGIN_RATE_LIMIT, AUTH_LOGIN_LIMIT)
+  const windowSeconds = getPositiveInteger(
+    env.AUTH_RATE_LIMIT_WINDOW_SECONDS,
+    AUTH_RATE_LIMIT_WINDOW_SECONDS,
+  )
+
+  return checkRateLimit(env, {
+    key: `turtle-soup:rl:auth:${action}:${ip}`,
+    limit,
+    windowSeconds,
+  })
+}
+
+async function checkAiRateLimit(request, env, userId) {
+  const ipLimit = await checkRateLimit(env, {
+    key: `turtle-soup:rl:ai:ip:${getClientIp(request)}`,
+    limit: getPositiveInteger(env.AI_IP_RATE_LIMIT, AI_IP_RATE_LIMIT),
+    windowSeconds: getPositiveInteger(
+      env.AI_IP_RATE_LIMIT_WINDOW_SECONDS,
+      AI_IP_RATE_LIMIT_WINDOW_SECONDS,
+    ),
+  })
+  if (!ipLimit.ok) {
+    return ipLimit
+  }
+
+  return checkRateLimit(env, {
+    key: `turtle-soup:rl:ai:user:${getUtcDateKey()}:${userId}`,
+    limit: getPositiveInteger(env.AI_USER_DAILY_LIMIT, AI_USER_DAILY_LIMIT),
+    windowSeconds: getSecondsUntilNextUtcDay(),
+  })
+}
+
+async function checkRateLimit(env, { key, limit, windowSeconds }) {
+  const count = await incrementRedisCounter(env, key, windowSeconds)
+  if (count <= limit) {
+    return { ok: true }
+  }
+
+  return {
+    ok: false,
+    response: json(
+      { error: 'Too many requests' },
+      429,
+      { 'Retry-After': String(windowSeconds) },
+    ),
+  }
+}
+
+function getClientIp(request) {
+  const forwardedFor = request.headers.get('x-forwarded-for')
+  if (forwardedFor) {
+    return forwardedFor.split(',')[0].trim() || 'unknown'
+  }
+
+  return (
+    request.headers.get('x-real-ip') ||
+    request.headers.get('cf-connecting-ip') ||
+    'unknown'
+  )
+}
+
+function getUtcDateKey(date = new Date()) {
+  return date.toISOString().slice(0, 10)
+}
+
+function getSecondsUntilNextUtcDay(now = new Date()) {
+  const nextDay = new Date(now)
+  nextDay.setUTCHours(24, 0, 0, 0)
+  return Math.max(1, Math.ceil((nextDay.getTime() - now.getTime()) / 1000))
+}
+
 async function login(request, env) {
   if (request.method !== 'POST') {
     return methodNotAllowed()
+  }
+
+  const rateLimit = await checkAuthRateLimit(request, env, 'login')
+  if (!rateLimit.ok) {
+    return rateLimit.response
   }
 
   const payload = await readJson(request)
@@ -440,11 +554,20 @@ async function progress(request, env) {
   return methodNotAllowed()
 }
 
-async function createSessionResponse(request, env, sql, user, status = 200) {
-  const token = createSessionToken()
+async function createSessionResponse(
+  request,
+  env,
+  sql,
+  user,
+  status = 200,
+  existingToken = '',
+) {
+  const token = existingToken || createSessionToken()
   const tokenHash = hashSessionToken(token, getSessionSecret(env))
 
-  await createRedisSession(env, tokenHash, user.id)
+  if (!existingToken) {
+    await createRedisSession(env, tokenHash, user.id)
+  }
 
   return json(
     { user },

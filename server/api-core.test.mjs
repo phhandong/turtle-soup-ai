@@ -110,6 +110,115 @@ test('logout clears the cookie even when Redis deletion fails', async () => {
   }
 })
 
+test('register does not create a user when session storage fails', async () => {
+  const originalConsoleError = console.error
+  console.error = () => {}
+  const users = []
+  const env = createTestEnv({
+    redis: {
+      async set() {
+        throw new Error('redis unavailable')
+      },
+      async del() {},
+    },
+    users,
+    extra: { __rateLimitStore: createMemoryRedisClient(new Map()) },
+  })
+
+  try {
+    const response = await handleApiRequest(
+      jsonRequest('https://example.com/api/auth/register', {
+        username: 'Alice',
+        email: 'alice@example.com',
+        password: 'correct-horse',
+      }),
+      env,
+    )
+    const body = await response.json()
+
+    assert.equal(response.status, 500)
+    assert.deepEqual(body, { error: 'Internal server error' })
+    assert.equal(users.length, 0)
+  } finally {
+    console.error = originalConsoleError
+  }
+})
+
+test('rate limits registration by client IP before creating users', async () => {
+  const redis = createMemoryRedisStore()
+  const users = []
+  const env = createTestEnv({
+    redis,
+    users,
+    extra: { AUTH_REGISTER_RATE_LIMIT: '1' },
+  })
+  const requestBody = {
+    username: 'Alice',
+    email: 'alice@example.com',
+    password: 'correct-horse',
+  }
+
+  const firstResponse = await handleApiRequest(
+    jsonRequest('https://example.com/api/auth/register', requestBody, {
+      'x-forwarded-for': '203.0.113.10',
+    }),
+    env,
+  )
+  const secondResponse = await handleApiRequest(
+    jsonRequest(
+      'https://example.com/api/auth/register',
+      {
+        ...requestBody,
+        username: 'Bob',
+        email: 'bob@example.com',
+      },
+      { 'x-forwarded-for': '203.0.113.10' },
+    ),
+    env,
+  )
+
+  assert.equal(firstResponse.status, 201)
+  assert.equal(secondResponse.status, 429)
+  assert.equal(users.length, 1)
+  assert.equal(secondResponse.headers.get('retry-after'), '900')
+})
+
+test('rate limits login by client IP before password verification', async () => {
+  const redis = createMemoryRedisStore()
+  const user = await createUser()
+  const env = createTestEnv({
+    redis,
+    users: [user],
+    extra: { AUTH_LOGIN_RATE_LIMIT: '1' },
+  })
+
+  const firstResponse = await handleApiRequest(
+    jsonRequest(
+      'https://example.com/api/auth/login',
+      {
+        identity: user.email,
+        password: 'wrong-password',
+      },
+      { 'x-forwarded-for': '203.0.113.11' },
+    ),
+    env,
+  )
+  const secondResponse = await handleApiRequest(
+    jsonRequest(
+      'https://example.com/api/auth/login',
+      {
+        identity: user.email,
+        password: 'correct-horse',
+      },
+      { 'x-forwarded-for': '203.0.113.11' },
+    ),
+    env,
+  )
+
+  assert.equal(firstResponse.status, 401)
+  assert.equal(secondResponse.status, 429)
+})
+
 test('ai endpoint requires a valid Redis session before proxying', async () => {
   const redis = createMemoryRedisStore()
   const user = await createUser()
@@ -149,6 +258,47 @@ test('ai endpoint requires a valid Redis session before proxying', async () => {
 
   assert.equal(authenticatedResponse.status, 200)
   assert.equal(requestedUrl, 'https://fc.example.com')
+})
+
+test('rate limits ai requests by user daily quota', async () => {
+  const redis = createMemoryRedisStore()
+  const user = await createUser()
+  const token = 'daily-ai-token'
+  const tokenHash = hashSessionToken(token, sessionSecret)
+  let upstreamCalls = 0
+  const env = createTestEnv({
+    redis,
+    users: [user],
+    extra: {
+      AI_USER_DAILY_LIMIT: '1',
+      FC_API_URL: 'https://fc.example.com',
+      __fetchImpl: async () => {
+        upstreamCalls += 1
+        return new Response(JSON.stringify({ answer: '是', label: 'yes' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        })
+      },
+    },
+  })
+  await createRedisSession(env, tokenHash, user.id)
+
+  const headers = {
+    Cookie: buildCookieHeader(token),
+    'x-forwarded-for': '203.0.113.12',
+  }
+  const firstResponse = await handleApiRequest(
+    jsonRequest('https://example.com/api/ai', { storyId: 'story-1' }, headers),
+    env,
+  )
+  const secondResponse = await handleApiRequest(
+    jsonRequest('https://example.com/api/ai', { storyId: 'story-1' }, headers),
+    env,
+  )
+
+  assert.equal(firstResponse.status, 200)
+  assert.equal(secondResponse.status, 429)
+  assert.equal(upstreamCalls, 1)
 })
 
 test('async auth route failures are returned as controlled 500 responses', async () => {
@@ -203,7 +353,7 @@ function createTestEnv({ redis, users, extra = {} }) {
 }
 
 function createMemorySql(users) {
-  const normalizedUsers = [...users]
+  const normalizedUsers = users
 
   return async function sql(strings, ...values) {
     const query = strings.join('?')
@@ -225,6 +375,42 @@ function createMemorySql(users) {
     if (/FROM users\s+WHERE id/i.test(query)) {
       const userId = values[0]
       return normalizedUsers.filter((user) => user.id === userId).slice(0, 1)
+    }
+
+    if (/INSERT INTO users/i.test(query)) {
+      const [
+        id,
+        username,
+        usernameNormalized,
+        email,
+        emailNormalized,
+        passwordHash,
+        avatarKey,
+      ] = values
+      const exists = normalizedUsers.some(
+        (user) =>
+          user.username_normalized === usernameNormalized ||
+          user.email_normalized === emailNormalized,
+      )
+      if (exists) {
+        const error = new Error('duplicate key value violates unique constraint')
+        error.code = '23505'
+        throw error
+      }
+
+      const user = {
+        id,
+        username,
+        username_normalized: usernameNormalized,
+        email,
+        email_normalized: emailNormalized,
+        password_hash: passwordHash,
+        avatar_key: avatarKey,
+        avatar_url: null,
+        created_at: '2026-01-01T00:00:00.000Z',
+      }
+      normalizedUsers.push(user)
+      return [user]
     }
 
     throw new Error(`Unexpected SQL in test: ${query}`)
@@ -265,6 +451,12 @@ function createMemoryRedisClient(raw) {
     async set(key, value) {
       raw.set(key, value)
     },
+    async incr(key) {
+      const nextValue = Number(raw.get(key) || 0) + 1
+      raw.set(key, nextValue)
+      return nextValue
+    },
+    async expire() {},
     async del(key) {
       raw.delete(key)
     },
