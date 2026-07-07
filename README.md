@@ -63,6 +63,12 @@ VITE_AI_API_URL=/api/ai
 
 Upstash 还会提供 `KV_URL` 和 `REDIS_URL` Redis 协议连接串；本站的 Vercel Serverless 链路使用 REST API 环境变量，不使用这两个连接串。`KV_REST_API_READ_ONLY_TOKEN` 用于会话读取，登录、登出和刷新会话 TTL 使用 `KV_REST_API_TOKEN`。如果 Redis 凭证曾出现在聊天、日志或公开位置，请先在 Upstash/Vercel 中 rotate 后再用于生产。
 
+可靠性说明：
+
+- 做题进度保存使用前端序号保护，旧请求晚返回时不会覆盖更新的进度；重开题目也会使旧保存结果失效。
+- Cookie 解析会跳过畸形 percent 编码值，避免无效 Cookie 把认证接口打成 500。
+- 数据表初始化状态按 SQL 实例隔离，多个数据库连接或测试环境不会共用同一个 schema ready 标记。
+
 ## 云服务器 Node 转发服务
 
 生产链路为：浏览器请求当前站点同域 `/api/ai`，Node 服务再转发到阿里云函数计算 `https://api-turtle.handong-joy.xyz`。

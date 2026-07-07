@@ -328,6 +328,56 @@ test('async auth route failures are returned as controlled 500 responses', async
   }
 })
 
+test('initializes schema separately for each SQL instance', async () => {
+  const user = await createUser()
+  const firstRedis = createMemoryRedisStore()
+  const secondRedis = createMemoryRedisStore()
+  const firstTokenHash = hashSessionToken('first-token', sessionSecret)
+  const secondTokenHash = hashSessionToken('second-token', sessionSecret)
+  let firstSchemaCalls = 0
+  let secondSchemaCalls = 0
+  const firstEnv = createTestEnv({
+    redis: firstRedis,
+    users: [user],
+    extra: {
+      __sql: createMemorySql([user], {
+        onSchema() {
+          firstSchemaCalls += 1
+        },
+      }),
+    },
+  })
+  const secondEnv = createTestEnv({
+    redis: secondRedis,
+    users: [user],
+    extra: {
+      __sql: createMemorySql([user], {
+        onSchema() {
+          secondSchemaCalls += 1
+        },
+      }),
+    },
+  })
+  await createRedisSession(firstEnv, firstTokenHash, user.id)
+  await createRedisSession(secondEnv, secondTokenHash, user.id)
+
+  await handleApiRequest(
+    new Request('https://example.com/api/auth/me', {
+      headers: { Cookie: buildCookieHeader('first-token') },
+    }),
+    firstEnv,
+  )
+  await handleApiRequest(
+    new Request('https://example.com/api/auth/me', {
+      headers: { Cookie: buildCookieHeader('second-token') },
+    }),
+    secondEnv,
+  )
+
+  assert.ok(firstSchemaCalls > 0)
+  assert.ok(secondSchemaCalls > 0)
+})
+
 async function createUser(overrides = {}) {
   return {
     id: overrides.id ?? 'user-1',
@@ -352,13 +402,14 @@ function createTestEnv({ redis, users, extra = {} }) {
   }
 }
 
-function createMemorySql(users) {
+function createMemorySql(users, options = {}) {
   const normalizedUsers = users
 
   return async function sql(strings, ...values) {
     const query = strings.join('?')
 
     if (/CREATE TABLE|ALTER TABLE|CREATE INDEX/i.test(query)) {
+      options.onSchema?.()
       return []
     }
 

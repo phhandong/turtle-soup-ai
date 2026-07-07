@@ -114,6 +114,7 @@ function App() {
   )
   const [isProgressLoading, setIsProgressLoading] = useState(false)
   const [progressSyncError, setProgressSyncError] = useState('')
+  const progressSaveSequenceRef = useRef<Record<string, number>>({})
   const [selectedModel, setSelectedModel] = useState<AiModelId>(() =>
     loadSelectedModel(),
   )
@@ -232,6 +233,8 @@ function App() {
 
   const handleProgressChange = useCallback(
     (storyId: string, progress: StoryProgressData) => {
+      const saveSequence = (progressSaveSequenceRef.current[storyId] ?? 0) + 1
+      progressSaveSequenceRef.current[storyId] = saveSequence
       const optimisticRecord = makeProgressRecord(storyId, progress)
       setProgressByStoryId((current) => ({
         ...current,
@@ -241,6 +244,10 @@ function App() {
 
       void saveProgressRecord(storyId, progress)
         .then((record) => {
+          if (progressSaveSequenceRef.current[storyId] !== saveSequence) {
+            return
+          }
+
           setProgressByStoryId((current) => ({
             ...current,
             [storyId]: record,
@@ -248,6 +255,10 @@ function App() {
         })
         .catch((error) => {
           console.error('Failed to sync story progress', error)
+          if (progressSaveSequenceRef.current[storyId] !== saveSequence) {
+            return
+          }
+
           setProgressSyncError('做题记录暂时没有同步成功。')
         })
     },
@@ -255,6 +266,8 @@ function App() {
   )
 
   const handleProgressClear = useCallback((storyId: string) => {
+    const saveSequence = (progressSaveSequenceRef.current[storyId] ?? 0) + 1
+    progressSaveSequenceRef.current[storyId] = saveSequence
     setProgressByStoryId((current) => {
       const next = { ...current }
       delete next[storyId]
@@ -264,6 +277,10 @@ function App() {
 
     void deleteProgressRecord(storyId).catch((error) => {
       console.error('Failed to delete story progress', error)
+      if (progressSaveSequenceRef.current[storyId] !== saveSequence) {
+        return
+      }
+
       setProgressSyncError('重开记录暂时没有同步成功。')
     })
   }, [])

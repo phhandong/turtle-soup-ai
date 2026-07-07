@@ -43,7 +43,7 @@ const AI_IP_RATE_LIMIT = 30
 const AI_USER_DAILY_LIMIT = 200
 
 const sqlByConnectionString = new Map()
-let schemaReady = false
+const schemaReadyBySql = new WeakSet()
 
 export async function handleApiRequest(request, env = process.env) {
   const url = new URL(request.url)
@@ -642,9 +642,9 @@ function getSessionSecret(env) {
 
 async function getReadySql(env) {
   const sql = getSql(env)
-  if (!schemaReady) {
+  if (!schemaReadyBySql.has(sql)) {
     await ensureSchema(sql)
-    schemaReady = true
+    schemaReadyBySql.add(sql)
   }
   return sql
 }

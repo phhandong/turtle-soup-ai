@@ -86,3 +86,10 @@ test('builds session cookies and hashes tokens', () => {
   assert.match(clearCookie, /Max-Age=0/)
   assert.equal(parseCookies(`turtle_session=${encodeURIComponent(token)}`).get('turtle_session'), token)
 })
+
+test('ignores malformed percent-encoded cookie values', () => {
+  const cookies = parseCookies('bad=%E0%A4%A; turtle_session=valid-token')
+
+  assert.equal(cookies.has('bad'), false)
+  assert.equal(cookies.get('turtle_session'), 'valid-token')
+})

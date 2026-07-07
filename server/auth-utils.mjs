@@ -155,7 +155,11 @@ export function parseCookies(cookieHeader) {
     const name = pair.slice(0, index).trim()
     const value = pair.slice(index + 1).trim()
     if (name) {
-      cookies.set(name, decodeURIComponent(value))
+      try {
+        cookies.set(name, decodeURIComponent(value))
+      } catch {
+        // Ignore malformed cookie values; callers will treat them as absent.
+      }
     }
   }
 
