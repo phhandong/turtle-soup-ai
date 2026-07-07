@@ -2667,6 +2667,59 @@ code {
   font-weight: 780;
 }
 
+.session-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(9, 16, 14, 0.5);
+  backdrop-filter: blur(8px);
+}
+
+.session-dialog {
+  width: min(420px, 100%);
+  border: 1px solid rgba(47, 111, 98, 0.22);
+  border-radius: 8px;
+  padding: 28px;
+  background: #fffdf7;
+  box-shadow: 0 24px 70px rgba(16, 24, 21, 0.24);
+}
+
+.session-dialog-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  background: rgba(47, 111, 98, 0.12);
+  color: var(--moss-dark);
+}
+
+.session-dialog h2 {
+  margin: 16px 0 8px;
+  font-size: 1.35rem;
+}
+
+.session-dialog p {
+  margin: 0 0 20px;
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+
+.session-dialog button {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  border-color: transparent;
+  background: var(--moss-dark);
+  color: #fffdf7;
+}
+
 .truth-panel {
   align-items: flex-start;
 }

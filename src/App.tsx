@@ -58,6 +58,7 @@ const MODEL_STORAGE_KEY = 'turtle-soup-model'
 const GUIDE_MESSAGE_STORAGE_KEY = 'turtle-soup-guide-message'
 const HINT_ENABLED_STORAGE_KEY = 'turtle-soup-hint-enabled'
 const SOUND_ENABLED_STORAGE_KEY = 'turtle-soup-sound-enabled'
+const AUTH_USER_STORAGE_KEY = 'turtle-soup-auth-user'
 const DEFAULT_AI_MODEL: AiModelId = 'deepseek-v4-flash'
 type ProgressByStoryId = Record<string, ProgressRecord>
 
@@ -100,8 +101,11 @@ function App() {
   const [authRequestMode, setAuthRequestMode] = useState<
     'login' | 'register' | null
   >(null)
-  const [authUser, setAuthUser] = useState<AuthUser | null>(null)
+  const [authUser, setAuthUser] = useState<AuthUser | null>(loadCachedAuthUser)
   const [isAuthLoading, setIsAuthLoading] = useState(true)
+  const [isAuthVerified, setIsAuthVerified] = useState(false)
+  const [showSessionExpiredDialog, setShowSessionExpiredDialog] =
+    useState(false)
   const [authError, setAuthError] = useState('')
   const [progressByStoryId, setProgressByStoryId] = useState<ProgressByStoryId>(
     {},
@@ -125,9 +129,13 @@ function App() {
           return
         }
 
+        setIsAuthVerified(!!user)
         setAuthUser(user)
+        saveCachedAuthUser(user)
         if (user) {
           await loadProgressRecords(isMounted)
+        } else if (authUser) {
+          setShowSessionExpiredDialog(true)
         }
       } catch (error) {
         if (isMounted) {
@@ -194,6 +202,9 @@ function App() {
 
   async function handleAuthenticated(user: AuthUser) {
     setAuthUser(user)
+    setIsAuthVerified(true)
+    saveCachedAuthUser(user)
+    setShowSessionExpiredDialog(false)
     setAuthRequestMode(null)
     await loadProgressRecords()
   }
@@ -205,9 +216,16 @@ function App() {
       console.error('Logout failed', error)
     } finally {
       setAuthUser(null)
+      setIsAuthVerified(false)
+      saveCachedAuthUser(null)
       setProgressByStoryId({})
       window.location.hash = ''
     }
+  }
+
+  function handleUserChange(user: AuthUser) {
+    setAuthUser(user)
+    saveCachedAuthUser(user)
   }
 
   const handleProgressChange = useCallback(
@@ -248,11 +266,7 @@ function App() {
     })
   }, [])
 
-  if (isAuthLoading && storyId) {
-    return <LoadingScreen message="正在打开汤题..." />
-  }
-
-  if (authUser && isProgressLoading && storyId) {
+  if (authUser && isAuthVerified && isProgressLoading && storyId) {
     return <LoadingScreen message="正在读取你的做题记录..." />
   }
 
@@ -260,7 +274,7 @@ function App() {
     return <MissingStory />
   }
 
-  if (!authUser && (authRequestMode || isProfilePage)) {
+  if (!authUser && (authRequestMode || isProfilePage) && !showSessionExpiredDialog) {
     return (
       <AuthGate
         defaultMode={authRequestMode ?? 'login'}
@@ -276,17 +290,27 @@ function App() {
 
   if (isProfilePage && authUser) {
     return (
-      <ProfilePage
-        user={authUser}
-        onBackHome={() => {
-          window.location.hash = ''
-        }}
-        onUserChange={setAuthUser}
-      />
+      <>
+        <ProfilePage
+          user={authUser}
+          onBackHome={() => {
+            window.location.hash = ''
+          }}
+          onUserChange={handleUserChange}
+        />
+        {showSessionExpiredDialog ? (
+          <SessionExpiredDialog
+            onLogin={() => {
+              setShowSessionExpiredDialog(false)
+              setAuthRequestMode('login')
+            }}
+          />
+        ) : null}
+      </>
     )
   }
 
-  return story ? (
+  const page = story ? (
     <StoryPage
       key={story.id}
       onSelectedModelChange={setSelectedModel}
@@ -296,16 +320,54 @@ function App() {
       selectedModel={selectedModel}
       story={story}
       progress={authUser ? progressByStoryId[story.id]?.progress : undefined}
-      progressByStoryId={authUser ? progressByStoryId : {}}
+      progressByStoryId={authUser && isAuthVerified ? progressByStoryId : {}}
       user={authUser}
+      isAuthVerified={isAuthVerified}
     />
   ) : (
     <HomePage
       onOpenAuth={setAuthRequestMode}
       onLogout={handleLogout}
-      progressByStoryId={authUser ? progressByStoryId : {}}
+      progressByStoryId={authUser && isAuthVerified ? progressByStoryId : {}}
       user={authUser}
     />
+  )
+
+  return (
+    <>
+      {page}
+      {showSessionExpiredDialog ? (
+        <SessionExpiredDialog
+          onLogin={() => {
+            setShowSessionExpiredDialog(false)
+            setAuthRequestMode('login')
+          }}
+        />
+      ) : null}
+    </>
+  )
+}
+
+function SessionExpiredDialog({ onLogin }: { onLogin: () => void }) {
+  return (
+    <div className="session-dialog-backdrop" role="presentation">
+      <div
+        aria-labelledby="session-dialog-title"
+        aria-modal="true"
+        className="session-dialog"
+        role="dialog"
+      >
+        <div className="session-dialog-icon" aria-hidden="true">
+          <LockKeyhole size={26} />
+        </div>
+        <h2 id="session-dialog-title">登录已过期</h2>
+        <p>你的登录状态已经失效，请重新登录后继续同步做题记录。</p>
+        <button type="button" onClick={onLogin}>
+          <LogIn size={17} />
+          重新登录
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -1357,11 +1419,13 @@ function StoryPage({
   onOpenAuth,
   onProgressChange,
   onProgressClear,
+  isAuthVerified,
 }: {
   story: Story
   selectedModel: AiModelId
   onSelectedModelChange: (model: AiModelId) => void
   user: AuthUser | null
+  isAuthVerified: boolean
   progress?: StoryProgressData
   progressByStoryId: ProgressByStoryId
   onOpenAuth: (mode: 'login' | 'register') => void
@@ -1424,7 +1488,7 @@ function StoryPage({
     hintItems.length,
     showTruth,
   )
-  const isAuthenticated = !!user
+  const isAuthenticated = !!user && isAuthVerified
   const askInputClassName = [
     'ask-input-shell',
     hintItems.length > 0 ? 'has-unlock-progress' : '',
@@ -2911,6 +2975,56 @@ function normalizeStoryProgress(progress?: Partial<StoryProgressData>): {
       : [],
     showTruth: progress?.showTruth === true,
   }
+}
+
+function loadCachedAuthUser(): AuthUser | null {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  try {
+    const raw = window.localStorage.getItem(AUTH_USER_STORAGE_KEY)
+    if (!raw) {
+      return null
+    }
+
+    const user = JSON.parse(raw) as Partial<AuthUser>
+    return isAuthUser(user) ? user : null
+  } catch {
+    return null
+  }
+}
+
+function saveCachedAuthUser(user: AuthUser | null) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    if (user) {
+      window.localStorage.setItem(AUTH_USER_STORAGE_KEY, JSON.stringify(user))
+    } else {
+      window.localStorage.removeItem(AUTH_USER_STORAGE_KEY)
+    }
+  } catch {
+    // The verified server session remains the source of truth.
+  }
+}
+
+function isAuthUser(value: unknown): value is AuthUser {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const user = value as Partial<AuthUser>
+  return (
+    typeof user.id === 'string' &&
+    typeof user.username === 'string' &&
+    typeof user.email === 'string' &&
+    typeof user.avatarKey === 'string' &&
+    typeof user.avatarUrl === 'string' &&
+    typeof user.createdAt === 'string'
+  )
 }
 
 function loadSelectedModel(): AiModelId {
