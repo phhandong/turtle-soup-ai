@@ -2024,6 +2024,7 @@ code {
 
 .chat-list-shell {
   position: relative;
+  overflow-anchor: none;
 }
 
 .chat-list {
@@ -2033,6 +2034,7 @@ code {
   flex-direction: column;
   gap: 14px;
   overflow-y: auto;
+  overflow-anchor: none;
   padding: 16px 2px;
   scrollbar-color: rgba(23, 32, 29, 0.3) transparent;
   scroll-behavior: smooth;
@@ -2078,6 +2080,7 @@ code {
     var(--paper);
   color: #40504b;
   animation: messageSlide 420ms var(--ease-out) 300ms backwards;
+  overflow-anchor: none;
 }
 
 .guide-message span {
@@ -2318,6 +2321,7 @@ code {
   align-items: stretch;
   gap: 8px;
   margin: 0 0 8px;
+  overflow-anchor: none;
 }
 
 .hint-meter {
@@ -2425,6 +2429,7 @@ code {
   grid-template-columns: none;
   gap: 10px;
   overflow-x: auto;
+  overflow-anchor: none;
   padding: 4px 0;
   scrollbar-width: thin;
 }

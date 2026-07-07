@@ -60,6 +60,8 @@ const HINT_ENABLED_STORAGE_KEY = 'turtle-soup-hint-enabled'
 const SOUND_ENABLED_STORAGE_KEY = 'turtle-soup-sound-enabled'
 const AUTH_USER_STORAGE_KEY = 'turtle-soup-auth-user'
 const DEFAULT_AI_MODEL: AiModelId = 'deepseek-v4-flash'
+const UI_SOUND_GAIN_MULTIPLIER = 9
+const HINT_AUTO_REVEAL_SIMILARITY_THRESHOLD = 0.68
 type ProgressByStoryId = Record<string, ProgressRecord>
 
 const modelOptions: Array<{ id: AiModelId; label: string }> = [
@@ -274,7 +276,11 @@ function App() {
     return <MissingStory />
   }
 
-  if (!authUser && (authRequestMode || isProfilePage) && !showSessionExpiredDialog) {
+  if (
+    !authUser &&
+    (authRequestMode || isProfilePage) &&
+    !showSessionExpiredDialog
+  ) {
     return (
       <AuthGate
         defaultMode={authRequestMode ?? 'login'}
@@ -594,8 +600,7 @@ function HomePage({
   const [showCompleted, setShowCompleted] = useState(false)
   const [showUncompleted, setShowUncompleted] = useState(false)
   const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false)
-  const [isHistoryPanelDismissed, setIsHistoryPanelDismissed] =
-    useState(false)
+  const [isHistoryPanelDismissed, setIsHistoryPanelDismissed] = useState(false)
   const [pageSize, setPageSize] = useState<(typeof pageSizeOptions)[number]>(10)
   const [currentPage, setCurrentPage] = useState(1)
   const tags = useMemo(
@@ -1067,7 +1072,9 @@ function ProfilePage({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const previewUser = { ...user, username, avatarUrl }
 
-  async function handleAvatarChange(event: React.ChangeEvent<HTMLInputElement>) {
+  async function handleAvatarChange(
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) {
     const file = event.target.files?.[0]
     if (!file) {
       return
@@ -1287,6 +1294,90 @@ function mergeHintIndexes(
       ),
     ),
   ).sort((left, right) => left - right)
+}
+
+function getAutoRevealHintIndexes(
+  aiHint: string | undefined,
+  hints: string[],
+  revealedIndexes: number[],
+) {
+  if (!aiHint?.trim()) {
+    return []
+  }
+
+  return hints
+    .map((hint, index) => ({
+      index,
+      similarity: getHintTextSimilarity(aiHint, hint),
+    }))
+    .filter(
+      ({ index, similarity }) =>
+        !revealedIndexes.includes(index) &&
+        similarity >= HINT_AUTO_REVEAL_SIMILARITY_THRESHOLD,
+    )
+    .map(({ index }) => index)
+}
+
+function getHintTextSimilarity(left: string, right: string) {
+  const normalizedLeft = normalizeHintText(left)
+  const normalizedRight = normalizeHintText(right)
+
+  if (!normalizedLeft || !normalizedRight) {
+    return 0
+  }
+
+  const shorterLength = Math.min(normalizedLeft.length, normalizedRight.length)
+  if (
+    shorterLength >= 6 &&
+    (normalizedLeft.includes(normalizedRight) ||
+      normalizedRight.includes(normalizedLeft))
+  ) {
+    return 1
+  }
+
+  const leftTokens = getHintSimilarityTokens(normalizedLeft)
+  const rightTokens = getHintSimilarityTokens(normalizedRight)
+  if (leftTokens.size === 0 || rightTokens.size === 0) {
+    return 0
+  }
+
+  let overlapCount = 0
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) {
+      overlapCount += 1
+    }
+  }
+
+  return overlapCount / Math.min(leftTokens.size, rightTokens.size)
+}
+
+function normalizeHintText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[，。！？、；：“”‘’（）()[\]{}<>《》.,!?;:'"`~@#$%^&*_+=|\\/\\-]/g, '')
+    .replace(/\s+/g, '')
+    .trim()
+}
+
+function getHintSimilarityTokens(value: string) {
+  const tokens = new Set<string>()
+
+  for (const token of value.match(/[a-z0-9]+/g) || []) {
+    if (token.length >= 3) {
+      tokens.add(token)
+    }
+  }
+
+  for (const token of value.match(/[\u4e00-\u9fff]{2,}/g) || []) {
+    tokens.add(token)
+    for (let size = 2; size <= Math.min(4, token.length); size += 1) {
+      for (let index = 0; index <= token.length - size; index += 1) {
+        tokens.add(token.slice(index, index + size))
+      }
+    }
+  }
+
+  return tokens
 }
 
 function getUnlockProgressPercent(
@@ -1580,7 +1671,7 @@ function StoryPage({
     setRevealedHintIndexes((current) =>
       mergeHintIndexes(current, allHintIndexes, hintItems.length),
     )
-    setIsHintTrayOpen(true)
+    openHintTrayWithoutPageJump()
   }, [hintItems, revealedHintIndexes, showTruth])
 
   useEffect(() => {
@@ -1708,6 +1799,21 @@ function StoryPage({
     }
 
     setTruthDialogMode(null)
+  }
+
+  function openHintTrayWithoutPageJump() {
+    if (isHintTrayOpen) {
+      return
+    }
+
+    const scrollX = window.scrollX
+    const scrollY = window.scrollY
+
+    setIsHintTrayOpen(true)
+
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: scrollY, left: scrollX, behavior: 'auto' })
+    })
   }
 
   function resizeQuestionInput() {
@@ -1862,9 +1968,16 @@ function StoryPage({
       setEntries(nextEntries)
       setQuestion('')
       playUiSound('reply', soundEnabled)
+      const autoRevealHintIndexes = hintEnabled
+        ? getAutoRevealHintIndexes(
+            answer.hint,
+            hintItems,
+            revealedHintIndexes,
+          )
+        : []
       const nextRevealedHintIndexes = mergeHintIndexes(
         revealedHintIndexes,
-        answer.matchedHintIndexes ?? [],
+        [...(answer.matchedHintIndexes ?? []), ...autoRevealHintIndexes],
         hintItems.length,
       )
       const didUnlockHint =
@@ -1872,7 +1985,7 @@ function StoryPage({
 
       if (didUnlockHint) {
         setRevealedHintIndexes(nextRevealedHintIndexes)
-        setIsHintTrayOpen(true)
+        openHintTrayWithoutPageJump()
         maybeShowHintUnlockGuide(nextRevealedHintIndexes.length)
       }
       if (revealMode && answer.answer === '还原正确') {
@@ -1925,7 +2038,7 @@ function StoryPage({
   }
 
   function maybeShowHintUnlockGuide(unlockedCount: number) {
-    if (unlockedCount === 0 || hasSeenHintUnlockGuide) {
+    if (unlockedCount < 2 || hasSeenHintUnlockGuide) {
       return
     }
 
@@ -3269,7 +3382,10 @@ function playTone(
   filter.type = 'lowpass'
   filter.frequency.setValueAtTime(2400, startTime)
   envelope.gain.setValueAtTime(0.0001, startTime)
-  envelope.gain.exponentialRampToValueAtTime(gain, startTime + 0.015)
+  envelope.gain.exponentialRampToValueAtTime(
+    gain * UI_SOUND_GAIN_MULTIPLIER,
+    startTime + 0.015,
+  )
   envelope.gain.exponentialRampToValueAtTime(0.0001, startTime + duration)
 
   oscillator.connect(filter)
@@ -3446,14 +3562,14 @@ function SiteFooter() {
           target="_blank"
         >
           源码仓库
-        </a>
-        <a href="https://beian.miit.gov.cn/" rel="noreferrer" target="_blank">
-          浙ICP备2024119220号
-        </a>
-      </p>
-      <p className="footer-note">
+        </a>{' '}
         汤题内容改写自各来源站点，版权归原站点所有；开源协议仅适用于本站代码。
+        {/* <a href="https://beian.miit.gov.cn/" rel="noreferrer" target="_blank">
+          浙ICP备2024119220号
+        </a> */}
       </p>
+      {/* <p className="footer-note"> */}
+      {/* </p> */}
       <div className="footer-sponsors" aria-label="本站赞助者">
         <span>感谢赞助</span>
         <a
