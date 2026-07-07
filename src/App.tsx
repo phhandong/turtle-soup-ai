@@ -1,6 +1,7 @@
 import {
   type CSSProperties,
   useCallback,
+  useLayoutEffect,
   useEffect,
   useMemo,
   useRef,
@@ -57,6 +58,7 @@ const STORY_PROGRESS_STORAGE_PREFIX = 'turtle-soup-history:'
 const MODEL_STORAGE_KEY = 'turtle-soup-model'
 const GUIDE_MESSAGE_STORAGE_KEY = 'turtle-soup-guide-message'
 const HINT_ENABLED_STORAGE_KEY = 'turtle-soup-hint-enabled'
+const QUESTION_PROMPTS_STORAGE_KEY = 'turtle-soup-question-prompts'
 const SOUND_ENABLED_STORAGE_KEY = 'turtle-soup-sound-enabled'
 const AUTH_USER_STORAGE_KEY = 'turtle-soup-auth-user'
 const DEFAULT_AI_MODEL: AiModelId = 'deepseek-v4-flash'
@@ -86,6 +88,43 @@ const defaultHintSettings: Record<
   medium: { questionLimit: 45, hintCost: 15 },
   hard: { questionLimit: 60, hintCost: 20 },
 }
+const questionPromptGroups = [
+  [
+    '这个人知道真相吗？',
+    '死亡是意外吗？',
+    '地点重要吗？',
+    '有凶手吗？',
+    '动机重要吗？',
+  ],
+  [
+    '死者认识凶手吗？',
+    '时间顺序重要吗？',
+    '有第三人在场吗？',
+    '死者自愿这样做吗？',
+    '有人在撒谎吗？',
+  ],
+  [
+    '物品被调换了吗？',
+    '他说谎了吗？',
+    '职业重要吗？',
+    '年龄重要吗？',
+    '房间布局重要吗？',
+  ],
+  [
+    '原因发生在过去吗？',
+    '身份被误认了吗？',
+    '这和钱有关吗？',
+    '关系亲疏重要吗？',
+    '有人提前计划了吗？',
+  ],
+  [
+    '有人故意隐瞒吗？',
+    '天气重要吗？',
+    '这句话是关键吗？',
+    '现场有伪装吗？',
+    '结局可以避免吗？',
+  ],
+] as const
 type TruthDialogMode =
   | 'confirm'
   | 'hintConfirm'
@@ -1317,6 +1356,7 @@ function getAutoRevealHintIndexes(
   aiHint: string | undefined,
   hints: string[],
   revealedIndexes: number[],
+  question: string,
 ) {
   if (!aiHint?.trim()) {
     return []
@@ -1330,9 +1370,76 @@ function getAutoRevealHintIndexes(
     .filter(
       ({ index, similarity }) =>
         !revealedIndexes.includes(index) &&
-        similarity >= HINT_AUTO_REVEAL_SIMILARITY_THRESHOLD,
+        similarity >= HINT_AUTO_REVEAL_SIMILARITY_THRESHOLD &&
+        isHintUnlockQuestionRelevant(question, hints[index]),
     )
     .map(({ index }) => index)
+}
+
+function isHintUnlockQuestionRelevant(question: string, hint: string) {
+  const questionCoreTokens = getCoreHintTokens(question)
+  const hintCoreTokens = getCoreHintTokens(hint)
+
+  if (hasSharedHintToken(questionCoreTokens, hintCoreTokens)) {
+    return true
+  }
+
+  if (
+    !isExclusionHint(hint) &&
+    hasSharedSpecificShortHintToken(
+      getShortHintTokens(question),
+      getShortHintTokens(hint),
+    )
+  ) {
+    return true
+  }
+
+  return false
+}
+
+function hasSharedHintToken(leftTokens: Set<string>, rightTokens: Set<string>) {
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function hasSharedSpecificShortHintToken(
+  leftTokens: Set<string>,
+  rightTokens: Set<string>,
+) {
+  const genericTokens = new Set([
+    '不是',
+    '是否',
+    '有没有',
+    '没有',
+    '有关',
+    '关系',
+    '问题',
+    '原因',
+    '这个',
+    '那个',
+    '有人',
+    '东西',
+    '地方',
+    '时候',
+    '重要',
+  ])
+
+  for (const token of leftTokens) {
+    if (!genericTokens.has(token) && rightTokens.has(token)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function isExclusionHint(value: string) {
+  return /不在|不是|并非|无关|没有|没/.test(value)
 }
 
 function getHintTextSimilarity(left: string, right: string) {
@@ -1391,6 +1498,51 @@ function getHintSimilarityTokens(value: string) {
       for (let index = 0; index <= token.length - size; index += 1) {
         tokens.add(token.slice(index, index + size))
       }
+    }
+  }
+
+  return tokens
+}
+
+function getCoreHintTokens(value: string) {
+  const normalized = normalizeHintText(value)
+  const tokens = new Set<string>()
+
+  for (const token of normalized.match(/[a-z0-9]+/g) || []) {
+    if (token.length >= 4) {
+      tokens.add(token)
+    }
+  }
+
+  for (const token of normalized.match(/[\u4e00-\u9fff]{2,}/g) || []) {
+    if (token.length <= 3) {
+      tokens.add(token)
+      continue
+    }
+
+    for (let size = 3; size <= Math.min(5, token.length); size += 1) {
+      for (let index = 0; index <= token.length - size; index += 1) {
+        tokens.add(token.slice(index, index + size))
+      }
+    }
+  }
+
+  return tokens
+}
+
+function getShortHintTokens(value: string) {
+  const normalized = normalizeHintText(value)
+  const tokens = new Set<string>()
+
+  for (const token of normalized.match(/[a-z0-9]+/g) || []) {
+    if (token.length >= 3) {
+      tokens.add(token)
+    }
+  }
+
+  for (const token of normalized.match(/[\u4e00-\u9fff]{2,}/g) || []) {
+    for (let index = 0; index <= token.length - 2; index += 1) {
+      tokens.add(token.slice(index, index + 2))
     }
   }
 
@@ -1572,6 +1724,9 @@ function StoryPage({
   const [showGuideMessage, setShowGuideMessage] = useState(
     loadGuideMessagePreference,
   )
+  const [showQuestionPrompts, setShowQuestionPrompts] = useState(
+    loadQuestionPromptPreference,
+  )
   const [showRevealModeToast, setShowRevealModeToast] = useState(false)
   const [revealModeToastKey, setRevealModeToastKey] = useState(0)
   const [soundEnabled, setSoundEnabled] = useState(loadSoundPreference)
@@ -1579,6 +1734,7 @@ function StoryPage({
   const [error, setError] = useState('')
   const [showScrollLatestButton, setShowScrollLatestButton] = useState(false)
   const [isReturningToLatest, setIsReturningToLatest] = useState(false)
+  const [questionPromptGroupIndex, setQuestionPromptGroupIndex] = useState(0)
   const chatListRef = useRef<HTMLDivElement>(null)
   const questionInputRef = useRef<HTMLTextAreaElement>(null)
   const isProgrammaticChatScrollRef = useRef(false)
@@ -1613,6 +1769,8 @@ function StoryPage({
       ),
     [progressByStoryId],
   )
+  const activeQuestionPrompts =
+    questionPromptGroups[questionPromptGroupIndex % questionPromptGroups.length]
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -1694,6 +1852,10 @@ function StoryPage({
   useEffect(() => {
     saveGuideMessagePreference(showGuideMessage)
   }, [showGuideMessage])
+
+  useEffect(() => {
+    saveQuestionPromptPreference(showQuestionPrompts)
+  }, [showQuestionPrompts])
 
   useEffect(() => {
     if (!showRevealModeToast) {
@@ -1933,6 +2095,48 @@ function StoryPage({
     event.currentTarget.form?.requestSubmit()
   }
 
+  function insertQuestionPrompt(prompt: string) {
+    if (isLoading || !isAuthenticated) {
+      return
+    }
+
+    const input = questionInputRef.current
+    const selectionStart = input?.selectionStart ?? question.length
+    const selectionEnd = input?.selectionEnd ?? question.length
+    const remainingLength =
+      160 - (question.length - (selectionEnd - selectionStart))
+
+    if (remainingLength <= 0) {
+      focusQuestionInput()
+      return
+    }
+
+    const insertedPrompt = prompt.slice(0, remainingLength)
+    const nextQuestion =
+      question.slice(0, selectionStart) +
+      insertedPrompt +
+      question.slice(selectionEnd)
+    const nextCursorPosition = selectionStart + insertedPrompt.length
+
+    setQuestion(nextQuestion)
+
+    window.requestAnimationFrame(() => {
+      const nextInput = questionInputRef.current
+      if (!nextInput) {
+        return
+      }
+
+      nextInput.focus()
+      nextInput.setSelectionRange(nextCursorPosition, nextCursorPosition)
+    })
+  }
+
+  function showNextQuestionPromptGroup() {
+    setQuestionPromptGroupIndex(
+      (current) => (current + 1) % questionPromptGroups.length,
+    )
+  }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!isAuthenticated) {
@@ -1990,6 +2194,7 @@ function StoryPage({
             answer.hint,
             hintItems,
             revealedHintIndexes,
+            trimmedQuestion,
           )
         : []
       const nextRevealedHintIndexes = mergeHintIndexes(
@@ -2196,6 +2401,16 @@ function StoryPage({
                 </label>
                 <label className="switch">
                   <input
+                    checked={showQuestionPrompts}
+                    type="checkbox"
+                    onChange={(event) =>
+                      setShowQuestionPrompts(event.target.checked)
+                    }
+                  />
+                  <span>显示提问词</span>
+                </label>
+                <label className="switch">
+                  <input
                     checked={soundEnabled}
                     type="checkbox"
                     onChange={(event) => setSoundEnabled(event.target.checked)}
@@ -2325,6 +2540,17 @@ function StoryPage({
             used={usedQuestionBudget}
             onRevealHint={requestRevealHint}
             onToggleCompact={() => setIsHintTrayOpen((current) => !current)}
+            promptActions={
+              showQuestionPrompts ? (
+                <QuestionPromptStrip
+                  isDisabled={isLoading || !isAuthenticated}
+                  prompts={activeQuestionPrompts}
+                  onClose={() => setShowQuestionPrompts(false)}
+                  onInsertPrompt={insertQuestionPrompt}
+                  onRefresh={showNextQuestionPromptGroup}
+                />
+              ) : null
+            }
           />
         ) : null}
 
@@ -2676,6 +2902,7 @@ function HintShelf({
   isCompactOpen,
   isDisabled,
   limit,
+  promptActions,
   revealedIndexes,
   used,
   onRevealHint,
@@ -2685,6 +2912,7 @@ function HintShelf({
   isCompactOpen: boolean
   isDisabled: boolean
   limit: number
+  promptActions?: React.ReactNode
   revealedIndexes: number[]
   used: number
   onRevealHint: (hintIndex: number) => void
@@ -2714,6 +2942,9 @@ function HintShelf({
         <span>提示</span>
         <strong>{revealedCount}/3</strong>
       </button>
+      {promptActions ? (
+        <div className="hint-prompt-actions">{promptActions}</div>
+      ) : null}
       <div className="hint-strip">
         {hints.map((hint, index) => {
           const isRevealed = revealedIndexes.includes(index)
@@ -2736,6 +2967,147 @@ function HintShelf({
             </button>
           )
         })}
+      </div>
+    </div>
+  )
+}
+
+function QuestionPromptStrip({
+  isDisabled,
+  prompts,
+  onClose,
+  onInsertPrompt,
+  onRefresh,
+}: {
+  isDisabled: boolean
+  prompts: readonly string[]
+  onClose: () => void
+  onInsertPrompt: (prompt: string) => void
+  onRefresh: () => void
+}) {
+  const stripRef = useRef<HTMLDivElement>(null)
+  const measureRef = useRef<HTMLDivElement>(null)
+  const [visiblePromptCount, setVisiblePromptCount] = useState(prompts.length)
+  const visiblePrompts = prompts.slice(0, visiblePromptCount)
+
+  const updateVisiblePromptCount = useCallback(() => {
+    const strip = stripRef.current
+    const measure = measureRef.current
+
+    if (!strip || !measure) {
+      setVisiblePromptCount(prompts.length)
+      return
+    }
+
+    const measureButtons = Array.from(
+      measure.querySelectorAll<HTMLButtonElement>('.question-prompt-chip'),
+    )
+    const measureActions = measure.querySelector<HTMLDivElement>(
+      '.question-prompt-actions',
+    )
+
+    if (measureButtons.length === 0 || !measureActions) {
+      setVisiblePromptCount(prompts.length)
+      return
+    }
+
+    const style = window.getComputedStyle(strip)
+    const gap = Number.parseFloat(style.columnGap || style.gap) || 0
+    const inlinePadding =
+      Number.parseFloat(style.paddingLeft) +
+      Number.parseFloat(style.paddingRight)
+    const availableWidth =
+      strip.clientWidth - inlinePadding - measureActions.offsetWidth
+    let usedWidth = 0
+    let nextVisibleCount = 0
+
+    for (const button of measureButtons) {
+      const nextWidth =
+        usedWidth + (nextVisibleCount > 0 ? gap : 0) + button.offsetWidth
+      const actionGap = nextVisibleCount >= 0 ? gap : 0
+
+      if (nextWidth + actionGap > availableWidth) {
+        break
+      }
+
+      usedWidth = nextWidth
+      nextVisibleCount += 1
+    }
+
+    setVisiblePromptCount(Math.max(0, nextVisibleCount))
+  }, [prompts])
+
+  useLayoutEffect(() => {
+    updateVisiblePromptCount()
+  }, [prompts, updateVisiblePromptCount])
+
+  useEffect(() => {
+    const strip = stripRef.current
+
+    if (!strip) {
+      return
+    }
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateVisiblePromptCount()
+    })
+
+    resizeObserver.observe(strip)
+    return () => resizeObserver.disconnect()
+  }, [updateVisiblePromptCount])
+
+  return (
+    <div
+      className="question-prompt-strip"
+      aria-label="可选提问词"
+      ref={stripRef}
+    >
+      {visiblePrompts.map((prompt) => (
+        <button
+          className="question-prompt-chip"
+          disabled={isDisabled}
+          key={prompt}
+          type="button"
+          onClick={() => onInsertPrompt(prompt)}
+        >
+          {prompt}
+        </button>
+      ))}
+      <div className="question-prompt-actions">
+        <button
+          aria-label="切换提问词"
+          className="question-prompt-refresh"
+          disabled={isDisabled}
+          title="切换提问词"
+          type="button"
+          onClick={onRefresh}
+        >
+          <RefreshCw size={15} />
+        </button>
+        <button
+          aria-label="关闭提问词"
+          className="question-prompt-close"
+          title="关闭提问词"
+          type="button"
+          onClick={onClose}
+        >
+          <X size={15} />
+        </button>
+      </div>
+      <div className="question-prompt-measure" aria-hidden="true" ref={measureRef}>
+        {prompts.map((prompt) => (
+          <button className="question-prompt-chip" key={prompt} type="button">
+            {prompt}
+          </button>
+        ))}
+        <div className="question-prompt-actions">
+          <button className="question-prompt-refresh" type="button">
+            <RefreshCw size={15} />
+          </button>
+          <button className="question-prompt-close" type="button">
+            <X size={15} />
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -3205,6 +3577,35 @@ function saveGuideMessagePreference(isVisible: boolean) {
   try {
     window.localStorage.setItem(
       GUIDE_MESSAGE_STORAGE_KEY,
+      isVisible ? 'visible' : 'hidden',
+    )
+  } catch {
+    // The in-memory preference still applies for this session.
+  }
+}
+
+function loadQuestionPromptPreference() {
+  if (typeof window === 'undefined') {
+    return true
+  }
+
+  try {
+    return (
+      window.localStorage.getItem(QUESTION_PROMPTS_STORAGE_KEY) !== 'hidden'
+    )
+  } catch {
+    return true
+  }
+}
+
+function saveQuestionPromptPreference(isVisible: boolean) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(
+      QUESTION_PROMPTS_STORAGE_KEY,
       isVisible ? 'visible' : 'hidden',
     )
   } catch {

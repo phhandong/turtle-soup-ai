@@ -123,6 +123,47 @@ test('returns matched hint indexes from valid candidates only', async () => {
   })
 })
 
+test('drops output hint when it copies a fixed hint candidate', async () => {
+  process.env.AGNES_API_KEY = 'server-only-test-key'
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content:
+                '{"answer":"是","hint":"雨具改变了触及范围。","matchedHintIndexes":[2]}',
+            },
+          },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )
+
+  const response = await handler(
+    makeEvent({
+      method: 'POST',
+      origin: 'https://turtle.handong-joy.xyz',
+      body: {
+        storyId: 'test-story',
+        surface: '汤面',
+        truth: '汤底',
+        question: '雨具是不是改变了触及范围？',
+        hintCandidates: [{ index: 2, text: '雨具改变了触及范围。' }],
+        hintEnabled: true,
+        revealMode: false,
+        model: 'agnes-2.0-flash',
+      },
+    }),
+  )
+
+  assert.deepEqual(JSON.parse(response.body), {
+    answer: '是',
+    label: 'yes',
+    matchedHintIndexes: [2],
+  })
+})
+
 test('drops loose hint matches without keyword overlap', async () => {
   process.env.AGNES_API_KEY = 'server-only-test-key'
   globalThis.fetch = async () =>
@@ -159,6 +200,46 @@ test('drops loose hint matches without keyword overlap', async () => {
   assert.deepEqual(JSON.parse(response.body), {
     answer: '是',
     label: 'yes',
+    matchedHintIndexes: [],
+  })
+})
+
+test('drops exclusion hints when question only repeats the excluded object', async () => {
+  process.env.AGNES_API_KEY = 'server-only-test-key'
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: '{"answer":"不是","matchedHintIndexes":[1]}',
+            },
+          },
+        ],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    )
+
+  const response = await handler(
+    makeEvent({
+      method: 'POST',
+      origin: 'https://turtle.handong-joy.xyz',
+      body: {
+        storyId: 'test-story',
+        surface: '汤面',
+        truth: '汤底',
+        question: '电梯出问题了',
+        hintCandidates: [{ index: 1, text: '问题不在电梯坏了。' }],
+        hintEnabled: false,
+        revealMode: false,
+        model: 'agnes-2.0-flash',
+      },
+    }),
+  )
+
+  assert.deepEqual(JSON.parse(response.body), {
+    answer: '不是',
+    label: 'no',
     matchedHintIndexes: [],
   })
 })

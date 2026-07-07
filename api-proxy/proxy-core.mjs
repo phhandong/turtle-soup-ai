@@ -412,6 +412,7 @@ function buildPrompt(payload) {
     payload.hintEnabled
       ? '当前已开启提示模式，可以额外给一句非常短的 hint，但不要剧透关键反转。'
       : '当前未开启提示模式，不要输出 hint。',
+    '如果输出 hint，不能逐字照抄 hintCandidates 中任何一条固定提示；必须改写成更轻、更模糊的一句话。',
     '同时比较用户消息和 hintCandidates。只有当用户消息与候选提示中的关键词、关键物品、关键动作或关键因果高度相关时，才把该候选 index 放入 matchedHintIndexes。',
     '不要因为用户问题泛泛接近汤底、只表达宽泛方向、只碰到故事常见背景，就判定提示匹配；没有明确关键词重合或强语义对应时返回空数组。',
     'matchedHintIndexes 只能包含 hintCandidates 中出现的 index。',
@@ -453,8 +454,9 @@ function parseModelOutput(content, hintEnabled, hintCandidates = [], question = 
       ),
     }
 
-    if (hintEnabled && typeof parsed.hint === 'string' && parsed.hint.trim()) {
-      response.hint = parsed.hint.trim().slice(0, 80)
+    const hint = normalizeOutputHint(parsed.hint, hintCandidates)
+    if (hintEnabled && hint) {
+      response.hint = hint
     }
 
     return response
@@ -466,6 +468,34 @@ function parseModelOutput(content, hintEnabled, hintCandidates = [], question = 
       matchedHintIndexes: [],
     }
   }
+}
+
+function normalizeOutputHint(value, hintCandidates) {
+  if (typeof value !== 'string') {
+    return ''
+  }
+
+  const hint = value.trim().slice(0, 80)
+  if (!hint || isFixedHintCopy(hint, hintCandidates)) {
+    return ''
+  }
+
+  return hint
+}
+
+function isFixedHintCopy(value, hintCandidates) {
+  const normalizedValue = normalizeHintCopyText(value)
+  return hintCandidates.some(
+    (candidate) => normalizeHintCopyText(candidate.text) === normalizedValue,
+  )
+}
+
+function normalizeHintCopyText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[，。！？、；：“”‘’（）()[\]{}<>《》.,!?;:'"`~@#$%^&*_+=|\\/\\-]/g, '')
+    .replace(/\s+/g, '')
+    .trim()
 }
 
 function normalizeMatchedHintIndexes(
@@ -501,6 +531,10 @@ function normalizeMatchedHintIndexes(
 function isKeywordRelevant(question, hintText) {
   const questionTokens = getKeywordTokens(question)
   const hintTokens = getKeywordTokens(hintText)
+  const questionCoreTokens = getCoreKeywordTokens(question)
+  const hintCoreTokens = getCoreKeywordTokens(hintText)
+  const questionShortTokens = getShortKeywordTokens(question)
+  const hintShortTokens = getShortKeywordTokens(hintText)
 
   if (questionTokens.size === 0 || hintTokens.size === 0) {
     return false
@@ -514,18 +548,33 @@ function isKeywordRelevant(question, hintText) {
   }
 
   const overlapRatio = overlapCount / hintTokens.size
-  if (overlapCount >= 1 && overlapRatio >= 0.25) {
+  if (
+    overlapCount >= 2 &&
+    overlapRatio >= 0.35 &&
+    hasSharedCoreToken(questionCoreTokens, hintCoreTokens)
+  ) {
+    return true
+  }
+
+  if (hasSharedCoreToken(questionCoreTokens, hintCoreTokens)) {
+    return true
+  }
+
+  if (
+    !isExclusionHint(hintText) &&
+    hasSharedSpecificShortToken(questionShortTokens, hintShortTokens)
+  ) {
     return true
   }
 
   for (const hintToken of hintTokens) {
-    if (hintToken.length < 2) {
+    if (hintToken.length < 3) {
       continue
     }
 
     for (const questionToken of questionTokens) {
       if (
-        questionToken.length >= 2 &&
+        questionToken.length >= 3 &&
         (questionToken.includes(hintToken) || hintToken.includes(questionToken))
       ) {
         return true
@@ -534,6 +583,48 @@ function isKeywordRelevant(question, hintText) {
   }
 
   return false
+}
+
+function hasSharedCoreToken(leftTokens, rightTokens) {
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function hasSharedSpecificShortToken(leftTokens, rightTokens) {
+  const genericTokens = new Set([
+    '不是',
+    '是否',
+    '有没有',
+    '没有',
+    '有关',
+    '关系',
+    '问题',
+    '原因',
+    '这个',
+    '那个',
+    '有人',
+    '东西',
+    '地方',
+    '时候',
+    '重要',
+  ])
+
+  for (const token of leftTokens) {
+    if (!genericTokens.has(token) && rightTokens.has(token)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function isExclusionHint(value) {
+  return /不在|不是|并非|无关|没有|没/.test(String(value || ''))
 }
 
 function getKeywordTokens(value) {
@@ -554,6 +645,55 @@ function getKeywordTokens(value) {
       for (let index = 0; index <= token.length - size; index += 1) {
         tokens.add(token.slice(index, index + size))
       }
+    }
+  }
+
+  return tokens
+}
+
+function getCoreKeywordTokens(value) {
+  const normalized = String(value || '')
+    .toLowerCase()
+    .replace(/[，。！？、；：“”‘’（）()[\]{}<>《》.,!?;:'"`~@#$%^&*_+=|\\/\\-]/g, ' ')
+  const tokens = new Set()
+
+  for (const token of normalized.match(/[a-z0-9]+/g) || []) {
+    if (token.length >= 4) {
+      tokens.add(token)
+    }
+  }
+
+  for (const token of normalized.match(/[\u4e00-\u9fff]{2,}/g) || []) {
+    if (token.length <= 3) {
+      tokens.add(token)
+      continue
+    }
+
+    for (let size = 3; size <= Math.min(5, token.length); size += 1) {
+      for (let index = 0; index <= token.length - size; index += 1) {
+        tokens.add(token.slice(index, index + size))
+      }
+    }
+  }
+
+  return tokens
+}
+
+function getShortKeywordTokens(value) {
+  const normalized = String(value || '')
+    .toLowerCase()
+    .replace(/[，。！？、；：“”‘’（）()[\]{}<>《》.,!?;:'"`~@#$%^&*_+=|\\/\\-]/g, ' ')
+  const tokens = new Set()
+
+  for (const token of normalized.match(/[a-z0-9]+/g) || []) {
+    if (token.length >= 3) {
+      tokens.add(token)
+    }
+  }
+
+  for (const token of normalized.match(/[\u4e00-\u9fff]{2,}/g) || []) {
+    for (let index = 0; index <= token.length - 2; index += 1) {
+      tokens.add(token.slice(index, index + 2))
     }
   }
 
