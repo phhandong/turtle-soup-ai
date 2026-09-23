@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   ArrowLeft,
   ArrowRight,
   ArrowDown,
+  ChevronDown,
   CheckCircle2,
+  CircleHelp,
   Eye,
   LockKeyhole,
   LogIn,
@@ -451,6 +454,9 @@ function StoryPage({
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [showGuideMessage, setShowGuideMessage] = useState(
     loadGuideMessagePreference,
+  )
+  const [isGuideCollapsed, setIsGuideCollapsed] = useState(() =>
+    window.matchMedia('(max-width: 560px)').matches,
   )
   const [showQuestionPrompts, setShowQuestionPrompts] = useState(
     loadQuestionPromptPreference,
@@ -1157,33 +1163,6 @@ function StoryPage({
             ref={chatListRef}
             onScroll={updateScrollLatestButton}
           >
-            {showGuideMessage ? (
-              <article className="guide-message">
-                <div>
-                  <span>玩法说明</span>
-                  <div className="guide-message-copy">
-                    <p>右上角设置可切换 模型和游玩模式</p>
-                    <p>
-                      <strong>提示模式：</strong>回答会附带 方向提示
-                    </p>
-                    <p>
-                      <strong>揭晓模式：</strong>用于提交 完整真相
-                    </p>
-                    <p>
-                      <strong>提示：</strong>可查看提示，消耗提问次数
-                    </p>
-                  </div>
-                </div>
-                <button
-                  aria-label="关闭玩法说明"
-                  className="guide-message-action guide-message-close"
-                  type="button"
-                  onClick={() => setShowGuideMessage(false)}
-                >
-                  <X size={16} />
-                </button>
-              </article>
-            ) : null}
             {showHintUnlockGuide ? (
               <article className="guide-message hint-unlock-guide">
                 <div>
@@ -1388,6 +1367,54 @@ function StoryPage({
       </div>
 
       <SiteFooter />
+      {showGuideMessage
+        ? createPortal(
+            <aside className="floating-guide" aria-label="玩法说明">
+              <div className="floating-guide-header">
+                <button
+                  aria-controls="floating-guide-content"
+                  aria-expanded={!isGuideCollapsed}
+                  className="floating-guide-toggle"
+                  type="button"
+                  onClick={() => setIsGuideCollapsed((current) => !current)}
+                >
+                  <CircleHelp size={18} />
+                  <span>玩法说明</span>
+                  <ChevronDown
+                    className={isGuideCollapsed ? '' : 'expanded'}
+                    size={16}
+                  />
+                </button>
+                <button
+                  aria-label="关闭玩法说明"
+                  className="floating-guide-close"
+                  title="关闭玩法说明"
+                  type="button"
+                  onClick={() => setShowGuideMessage(false)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div
+                className="floating-guide-content"
+                hidden={isGuideCollapsed}
+                id="floating-guide-content"
+              >
+                <p>右上角设置可切换模型和游玩模式</p>
+                <p>
+                  <strong>提示模式：</strong>回答会附带方向提示
+                </p>
+                <p>
+                  <strong>揭晓模式：</strong>用于提交完整真相
+                </p>
+                <p>
+                  <strong>提示：</strong>可查看提示，消耗提问次数
+                </p>
+              </div>
+            </aside>,
+            document.body,
+          )
+        : null}
       {truthDialogMode ? (
         <TruthRevealDialog
           mode={truthDialogMode}
