@@ -55,7 +55,9 @@ SESSION_SECRET=至少 32 位随机字符串
 KV_REST_API_URL=https://...
 KV_REST_API_TOKEN=...
 KV_REST_API_READ_ONLY_TOKEN=...
-FC_API_URL=https://turtle-ai-proxy-opzmtticwv.cn-wulanchabu.fcapp.run
+AGNES_API_KEY=...
+DEEPSEEK_API_KEY=...
+UNITY_API_KEY=...
 VITE_AI_API_URL=/api/ai
 ```
 
@@ -63,15 +65,23 @@ VITE_AI_API_URL=/api/ai
 
 Upstash 还会提供 `KV_URL` 和 `REDIS_URL` Redis 协议连接串；本站的 Vercel Serverless 链路使用 REST API 环境变量，不使用这两个连接串。`KV_REST_API_READ_ONLY_TOKEN` 用于会话读取，登录、登出和刷新会话 TTL 使用 `KV_REST_API_TOKEN`。如果 Redis 凭证曾出现在聊天、日志或公开位置，请先在 Upstash/Vercel 中 rotate 后再用于生产。
 
+### Vercel Functions 直连模型
+
+浏览器仍请求同域 `/api/ai`。Vercel 的 `api/ai.js` 先验证 Redis 会话和限流；未配置 `FC_API_URL` 时，同一函数直接调用 `api-proxy/proxy-core.mjs` 中的模型接口。只在 Vercel 的服务端环境变量中设置实际启用模型对应的 API key，不要使用 `VITE_` 前缀。`VITE_AI_API_URL` 应为 `/api/ai` 或留空，不能指向旧 FC 地址。
+
+迁移时先在 Vercel 项目的 Settings -> Environment Variables 中为 Preview 添加模型密钥，删除 Preview 的 `FC_API_URL`，再创建新的 Preview 部署。登录后逐个测试实际开放的模型、提示和还原答案，并检查 Function 日志中的上游失败与耗时。确认稳定后，对 Production 做相同变更并重新部署。环境变量修改不影响已有部署；阿里云 FC 先保留一段回滚窗口。要回滚，在 Production 恢复 `FC_API_URL` 并重新部署。
+
+本地验证直连模式时，将 `.env.local` 中的 `FC_API_URL` 设为空，并填入服务端模型密钥、数据库和 Redis 变量。在两个终端分别执行 `npm start`（端口 4173）和 `npm run dev`（Vite 默认端口 5173）。Vite 会将 `/api` 转发到本地 Node 服务，完整链路包含登录与限流。有值的 `FC_API_URL` 则保留原有 FC 转发行为；`FC_TIMEOUT_MS` 和 `FC_MAX_ATTEMPTS` 只作用于该路径。
+
 可靠性说明：
 
 - 做题进度保存使用前端序号保护，旧请求晚返回时不会覆盖更新的进度；重开题目也会使旧保存结果失效。
 - Cookie 解析会跳过畸形 percent 编码值，避免无效 Cookie 把认证接口打成 500。
 - 数据表初始化状态按 SQL 实例隔离，多个数据库连接或测试环境不会共用同一个 schema ready 标记。
 
-## 云服务器 Node 转发服务
+## 云服务器 Node 转发服务（旧 FC 模式）
 
-生产链路为：浏览器请求当前站点同域 `/api/ai`，Node 服务再转发到阿里云函数计算 `https://api-turtle.handong-joy.xyz`。
+此部署模式仍可用于回滚：浏览器请求当前站点同域 `/api/ai`，Node 服务再转发到阿里云函数计算 `https://api-turtle.handong-joy.xyz`。
 
 ```bash
 npm run build
@@ -92,7 +102,7 @@ $env:KV_REST_API_READ_ONLY_TOKEN = "..."
 npm start
 ```
 
-本地完整链路测试也使用这个服务；打开 `http://127.0.0.1:4173` 后，浏览器 Network 中 AI 请求应只出现同域 `/api/ai`。
+打开 `http://127.0.0.1:4173` 后，浏览器 Network 中 AI 请求应只出现同域 `/api/ai`。`FC_API_URL` 为空时同一 Node 服务直接调用模型接口。
 
 ## 阿里云函数计算 API 代理
 

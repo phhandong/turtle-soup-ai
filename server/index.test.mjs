@@ -75,6 +75,44 @@ test('proxies /api/ai to the configured FC URL', async (t) => {
   assert.deepEqual(await response.json(), { answer: 'yes', label: 'yes' })
 })
 
+test('handles /api/ai locally with an empty FC URL', async (t) => {
+  const distDir = await makeDist()
+  t.after(() => rm(distDir, { recursive: true, force: true }))
+
+  const auth = createAuthFixture()
+  let requestedUrl
+  const server = await listen(createApp({
+    distDir,
+    fcApiUrl: '',
+    env: { ...createAuthenticatedEnv(auth), AGNES_API_KEY: 'test-agnes-key' },
+    fetchImpl: async (url) => {
+      requestedUrl = url
+      return new Response(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify({ answer: '\u662f' }) } }],
+      }), { status: 200 })
+    },
+  }))
+  t.after(async () => close(server))
+
+  const response = await fetch(`${server.url}/api/ai`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: auth.cookie },
+    body: JSON.stringify({
+      storyId: 'story-1',
+      surface: 'surface',
+      truth: 'truth',
+      question: 'question',
+      hintEnabled: false,
+      revealMode: false,
+      model: 'agnes-2.0-flash',
+    }),
+  })
+
+  assert.equal(response.status, 200)
+  assert.equal(requestedUrl, 'https://apihub.agnes-ai.com/v1/chat/completions')
+  assert.equal((await response.json()).label, 'yes')
+})
+
 test('retries retryable FC responses', async (t) => {
   const distDir = await makeDist()
   t.after(() => rm(distDir, { recursive: true, force: true }))

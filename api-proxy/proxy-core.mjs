@@ -75,6 +75,7 @@ export default {
       prompt,
       timings,
       debugTiming,
+      env.__fetchImpl || fetch,
     )
     if (!upstreamResult.ok) {
       return respond({ error: 'AI upstream request failed' }, 502, {
@@ -153,7 +154,7 @@ function buildDeepSeekChannel(env, model) {
   }
 }
 
-async function fetchUpstream(channels, prompt, timings, debugTiming) {
+async function fetchUpstream(channels, prompt, timings, debugTiming, fetchImpl) {
   const attempts = []
 
   for (const channel of channels) {
@@ -171,6 +172,7 @@ async function fetchUpstream(channels, prompt, timings, debugTiming) {
     try {
       const upstreamStartedAt = performance.now()
       response = await fetchWithTimeout(
+        fetchImpl,
         `${trimTrailingSlash(channel.baseUrl)}/chat/completions`,
         {
           method: 'POST',
@@ -242,12 +244,12 @@ async function fetchUpstream(channels, prompt, timings, debugTiming) {
   return { ok: false, attempts }
 }
 
-async function fetchWithTimeout(url, init, timeoutMs) {
+async function fetchWithTimeout(fetchImpl, url, init, timeoutMs) {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    return await fetch(url, {
+    return await fetchImpl(url, {
       ...init,
       signal: controller.signal,
     })

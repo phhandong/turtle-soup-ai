@@ -17,14 +17,14 @@ const RETRYABLE_UPSTREAM_STATUSES = new Set([502, 503, 504])
 const rootDir = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const distDir = resolve(rootDir, 'dist')
 loadLocalEnv(rootDir)
-const fcApiUrl = trimTrailingSlash(process.env.FC_API_URL || DEFAULT_FC_API_URL)
+const fcApiUrl = trimTrailingSlash(process.env.FC_API_URL ?? DEFAULT_FC_API_URL)
 const port = getPositiveNumber(process.env.PORT, DEFAULT_PORT)
 const timeoutMs = getPositiveNumber(process.env.FC_TIMEOUT_MS, DEFAULT_TIMEOUT_MS)
 
 export function createApp(options = {}) {
   const config = {
     distDir: resolve(options.distDir || distDir),
-    fcApiUrl: trimTrailingSlash(options.fcApiUrl || fcApiUrl),
+    fcApiUrl: trimTrailingSlash(options.fcApiUrl ?? fcApiUrl),
     timeoutMs: getPositiveNumber(options.timeoutMs, timeoutMs),
     fcMaxAttempts: getPositiveInteger(
       options.fcMaxAttempts || process.env.FC_MAX_ATTEMPTS,
@@ -361,6 +361,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
 
   server.listen(port, () => {
     console.log(`Server listening on http://127.0.0.1:${port}`)
-    console.log(`Forwarding /api/ai to ${fcApiUrl}`)
+    console.log(fcApiUrl ? `Forwarding /api/ai to ${fcApiUrl}` : 'Handling /api/ai locally')
   })
 }

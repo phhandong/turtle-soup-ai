@@ -260,6 +260,97 @@ test('ai endpoint requires a valid Redis session before proxying', async () => {
   assert.equal(requestedUrl, 'https://fc.example.com')
 })
 
+test('runs authenticated AI requests directly when FC_API_URL is empty', async () => {
+  const redis = createMemoryRedisStore()
+  const user = await createUser()
+  const token = 'direct-ai-token'
+  const tokenHash = hashSessionToken(token, sessionSecret)
+  const calls = []
+  const env = createTestEnv({
+    redis,
+    users: [user],
+    extra: {
+      FC_API_URL: '',
+      AGNES_API_KEY: 'test-agnes-key',
+      AI_USER_DAILY_LIMIT: '1',
+      __fetchImpl: async (url, init) => {
+        calls.push({ url, init })
+        return new Response(JSON.stringify({
+          choices: [{ message: { content: JSON.stringify({ answer: '\u662f' }) } }],
+        }), { status: 200 })
+      },
+    },
+  })
+  const payload = {
+    storyId: 'story-1',
+    surface: 'surface',
+    truth: 'truth',
+    question: 'question',
+    hintEnabled: false,
+    revealMode: false,
+    model: 'agnes-2.0-flash',
+  }
+
+  const anonymous = await handleApiRequest(
+    jsonRequest('https://example.com/api/ai', payload), env,
+  )
+  assert.equal(anonymous.status, 401)
+  assert.equal(calls.length, 0)
+
+  await createRedisSession(env, tokenHash, user.id)
+  const headers = { Cookie: buildCookieHeader(token) }
+  const response = await handleApiRequest(
+    jsonRequest('https://example.com/api/ai', payload, headers), env,
+  )
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), {
+    answer: '\u662f',
+    label: 'yes',
+    matchedHintIndexes: [],
+  })
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].url, 'https://apihub.agnes-ai.com/v1/chat/completions')
+  assert.equal(calls[0].init.headers.Authorization, 'Bearer test-agnes-key')
+  assert.equal(JSON.parse(calls[0].init.body).model, payload.model)
+
+  const limited = await handleApiRequest(
+    jsonRequest('https://example.com/api/ai', payload, headers), env,
+  )
+  assert.equal(limited.status, 429)
+  assert.equal(calls.length, 1)
+})
+
+test('returns 502 without a provider key in direct mode', async () => {
+  const redis = createMemoryRedisStore()
+  const user = await createUser()
+  const token = 'missing-direct-key-token'
+  const env = createTestEnv({
+    redis,
+    users: [user],
+    extra: {
+      FC_API_URL: '',
+      __fetchImpl: async () => {
+        throw new Error('Unexpected upstream call')
+      },
+    },
+  })
+  await createRedisSession(env, hashSessionToken(token, sessionSecret), user.id)
+
+  const response = await handleApiRequest(
+    jsonRequest('https://example.com/api/ai', {
+      storyId: 'story-1',
+      surface: 'surface',
+      truth: 'truth',
+      question: 'question',
+      model: 'agnes-2.0-flash',
+    }, { Cookie: buildCookieHeader(token) }),
+    env,
+  )
+
+  assert.equal(response.status, 502)
+  assert.deepEqual(await response.json(), { error: 'AI upstream request failed' })
+})
+
 test('rate limits ai requests by user daily quota', async () => {
   const redis = createMemoryRedisStore()
   const user = await createUser()
